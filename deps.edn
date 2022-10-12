@@ -1,0 +1,4 @@
+{:paths ["src" "resources"]
+ :deps {instaparse/instaparse {:mvn/version "1.4.12"}}
+ :aliases {:dev {:extra-paths ["dev"]
+                 :extra-deps {djblue/portal {:mvn/version "0.26.0"}}}}}

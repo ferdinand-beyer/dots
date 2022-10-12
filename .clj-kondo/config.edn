@@ -1,0 +1,2 @@
+{:lint-as
+ {instaparse.core/defparser clj-kondo.lint-as/def-catch-all}}

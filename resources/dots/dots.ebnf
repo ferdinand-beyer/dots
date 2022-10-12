@@ -1,0 +1,562 @@
+(**
+ * Partial TypeScript Grammar
+ *
+ * https://github.com/microsoft/TypeScript/blob/main/doc/spec-ARCHIVED.md#A
+ * https://262.ecma-international.org/6.0/#sec-grammar-summary
+ *)
+
+(* PARTIAL *)
+<SourceFile> = DeclarationSourceFile s-opt
+
+(*****************************************************************************
+ * ECMA A.1 Lexical Grammar
+ *****************************************************************************)
+
+WhiteSpace = #"\s+"
+
+Comment =
+    MultiLineComment
+  | SingleLineComment
+
+(*
+<MultiLineComment> = '/*' InsideMultiLineComment* '*/'
+<InsideMultiLineComment> = !( '*/' | '/*' ) (#"." | #"[\n\r]") | MultiLineComment
+*)
+<MultiLineComment> = #"(?s)/\*(?:[^*]*(?:\*[^/])?)*\*/"
+
+<SingleLineComment> = '//' #"[^\n]*"
+
+NullLiteral = NULL
+
+BooleanLiteral = TRUE | FALSE
+
+NumericLiteral =
+    DecimalLiteral
+(*
+  | BinaryIntegerLiteral
+  | OctalIntegerLiteral
+  | HexIntegerLiteral
+*)
+
+DecimalLiteral = s-opt #'(?:(0|[1-9]\d*)(?:\.\d*)?|\.\d+)(?:[Ee][-+]?\d+)?'
+
+(* TODO: Escape sequences *)
+StringLiteral = s-opt (#'"[^"]*"' | #"'[^']*'")
+
+IdentifierName = s-opt #"[$_\p{L}][$_\p{L}\p{N}]*"
+
+(*****************************************************************************
+ * ECMA A.2 Expressions
+ *****************************************************************************)
+
+IdentifierReference = Identifier
+
+BindingIdentifier = Identifier
+
+(* XXX but not ReservedWord *)
+Identifier = IdentifierName
+
+Literal = NullLiteral | BooleanLiteral | NumericLiteral | StringLiteral
+
+Initializer = EQUALS AssignmentExpression
+
+(* PARTIAL: Simplified a lot *)
+
+UnaryExpression =
+    Literal
+(*
+    PostfixExpression
+  | DELETE UnaryExpression
+*)
+  | VOID UnaryExpression
+  | TYPEOF UnaryExpression
+(*
+  | '--' UnaryExpression
+  | '++' UnaryExpression
+*)
+  | PLUS UnaryExpression
+  | MINUS UnaryExpression
+  | TILDE UnaryExpression
+  | BANG UnaryExpression
+
+AssignmentExpression = UnaryExpression
+
+(*****************************************************************************
+ * ECMA A.3 Statements
+ *****************************************************************************)
+
+LexicalDeclaration =
+  LetOrConst s BindingList SEMICOLON
+
+LetOrConst = LET | CONST
+
+BindingList = LexicalBinding (COMMA LexicalBinding)*
+
+(*****************************************************************************
+ * ECMA A.5 Scripts and Modules
+ *****************************************************************************)
+
+FromClause = FROM ModuleSpecifier
+
+ModuleSpecifier = StringLiteral
+
+ExportClause =
+    LBRACE RBRACE
+  | LBRACE ExportsList RBRACE
+  | LBRACE ExportsList COMMA RBRACE
+
+ExportsList =
+    ExportSpecifier
+  | ExportsList COMMA ExportSpecifier
+
+ExportSpecifier =
+    IdentifierName
+
+(*****************************************************************************
+ * TypeScript A.1 Types
+ *****************************************************************************)
+
+TypeParameters =
+  LT TypeParameter (COMMA TypeParameter)* GT
+
+(* ADDED: Default type *)
+TypeParameter =
+  BindingIdentifier Constraint? (EQUALS PrimaryType)?
+
+Constraint = EXTENDS Type
+
+TypeArguments = LT TypeArgument (COMMA TypeArgument)* GT
+
+TypeArgument = Type
+
+Type =
+    UnionOrIntersectionOrPrimaryType
+  | FunctionType
+  | ConstructorType
+
+UnionOrIntersectionOrPrimaryType = UnionType | IntersectionOrPrimaryType
+
+IntersectionOrPrimaryType = IntersectionType | PrimaryType
+
+UnionType = UnionOrIntersectionOrPrimaryType BAR IntersectionOrPrimaryType
+
+IntersectionType = IntersectionOrPrimaryType AMP PrimaryType
+
+PrimaryType =
+  ParenthesizedType
+  | PredefinedType
+  | TypeReference
+  | ObjectType
+  | ArrayType
+  | TupleType
+  | TypeQuery
+  | ThisType
+
+ParenthesizedType = LPAREN Type RPAREN
+
+PredefinedType =
+    ANY
+  | NUMBER
+  | BOOLEAN
+  | STRING
+  | SYMBOL
+  | VOID
+  | UNDEFINED (* ADDED *)
+
+TypeReference = TypeName TypeArguments?
+
+TypeName = NamespaceName
+
+NamespaceName =
+  IdentifierReference (PERIOD IdentifierReference)*
+
+ObjectType = LBRACE TypeBody? RBRACE
+
+TypeBody =
+  TypeMember
+    ((COMMA | SEMICOLON) TypeMember)*
+    (COMMA | SEMICOLON)?
+
+TypeMember =
+    PropertySignature
+  | CallSignature
+  | ConstructSignature
+  | IndexSignature
+  | MethodSignature
+
+(* ADDED: Readonly *)
+ArrayType = READONLY? PrimaryType LBRACKET RBRACKET
+
+(* ADDED: Labeled types, readonly *)
+TupleType = LabeledTupleType | UnlabeledTupleType
+
+LabeledTupleType =
+  READONLY? LBRACKET LabeledTupleElement (COMMA LabeledTupleElement)* RBRACKET
+
+LabeledTupleElement =
+  BindingIdentifier COLON TupleElementType
+
+UnlabeledTupleType =
+  READONLY? LBRACKET TupleElementType (COMMA TupleElementType)* RBRACKET
+
+TupleElementType = Type
+
+FunctionType = TypeParameters? LPAREN ParameterList? RPAREN ARROW Type
+
+ConstructorType = NEW TypeParameters? LPAREN ParameterList? RPAREN ARROW Type
+
+TypeQuery = TYPEOF TypeQueryExpression
+
+TypeQueryExpression =
+    IdentifierReference
+  | TypeQueryExpression PERIOD IdentifierName
+
+ThisType = THIS
+
+(* ADDED: readonly? *)
+PropertySignature = READONLY? PropertyName QMARK? TypeAnnotation?
+
+(* ADDED: "dynamic" property name *)
+PropertyName =
+    IdentifierName
+  | StringLiteral
+  | NumericLiteral
+  | LBRACKET (StringLiteral | NamespaceName) RBRACKET
+
+TypeAnnotation = COLON Type
+
+CallSignature = TypeParameters? LPAREN ParameterList? RPAREN TypeAnnotation?
+
+ParameterList =
+    RequiredParameterList
+  | OptionalParameterList
+  | RestParameter
+  | RequiredParameterList COMMA OptionalParameterList
+  | RequiredParameterList COMMA RestParameter
+  | OptionalParameterList COMMA RestParameter
+  | RequiredParameterList COMMA OptionalParameterList COMMA RestParameter
+
+RequiredParameterList = RequiredParameter (COMMA RequiredParameter)*
+
+RequiredParameter =
+    AccessibilityModifier? BindingIdentifierOrPattern TypeAnnotation?
+  | BindingIdentifier COLON StringLiteral
+
+AccessibilityModifier = PUBLIC | PRIVATE | PROTECTED
+
+(* PARTIAL: No BindingPattern *)
+BindingIdentifierOrPattern = BindingIdentifier
+
+OptionalParameterList = OptionalParameter (COMMA OptionalParameter)*
+
+OptionalParameter =
+    AccessibilityModifier? BindingIdentifierOrPattern QMARK TypeAnnotation?
+(*
+  | AccessibilityModifier? BindingIdentifierOrPattern TypeAnnotation? Initializer
+*)
+  | BindingIdentifier QMARK COLON StringLiteral
+
+RestParameter = ELLIPSIS BindingIdentifier TypeAnnotation?
+
+ConstructSignature =
+  NEW TypeParameters? LPAREN ParameterList? RPAREN TypeAnnotation?
+
+(* Added: Readonly *)
+IndexSignature =
+  READONLY? LBRACKET BindingIdentifier COLON (STRING | NUMBER) RBRACKET TypeAnnotation
+
+MethodSignature = PropertyName QMARK? CallSignature
+
+TypeAliasDeclaration =
+  TYPE s BindingIdentifier TypeParameters? EQUALS Type SEMICOLON
+
+(*****************************************************************************
+ * TypeScript A.3 Statements
+ *****************************************************************************)
+
+(* MODIFIED *)
+(* PARTIAL: Stripped Initializer, DestructuringLexicalBinding *)
+LexicalBinding =
+  BindingIdentifier TypeAnnotation?
+
+(*****************************************************************************
+ * TypeScript A.5 Functions
+ *****************************************************************************)
+
+FunctionDeclaration =
+(*
+    FUNCTION BindingIdentifier? CallSignature LBRACE FunctionBody RBRACE
+  | *) FUNCTION BindingIdentifier? CallSignature SEMICOLON
+
+(*****************************************************************************
+ * TypeScript A.5 Interfaces
+ *****************************************************************************)
+
+InterfaceDeclaration = 
+  INTERFACE s BindingIdentifier TypeParameters? InterfaceExtendsClause? ObjectType
+
+InterfaceExtendsClause = EXTENDS s ClassOrInterfaceTypeList
+
+ClassOrInterfaceTypeList = 
+  ClassOrInterfaceType (COMMA ClassOrInterfaceType)*
+
+ClassOrInterfaceType =
+  TypeReference
+
+(*****************************************************************************
+ * TypeScript A.6 Classes
+ *****************************************************************************)
+
+ClassDeclaration =
+  CLASS BindingIdentifier? TypeParameters? ClassHeritage LBRACE ClassBody RBRACE
+
+ClassHeritage = ClassExtendsClause? ImplementsClause?
+
+ClassExtendsClause = EXTENDS ClassType
+
+ClassType = TypeReference
+
+ImplementsClause = IMPLEMENTS ClassOrInterfaceTypeList
+
+ClassBody = ClassElement*
+
+ClassElement =
+    ConstructorDeclaration
+  | PropertyMemberDeclaration
+(*
+  | IndexMemberDeclaration
+*)
+
+ConstructorDeclaration =
+(*
+    AccessibilityModifier? CTOR LPAREN ParameterList? RPAREN LBRACE FunctionBody RBRACE
+  | *) AccessibilityModifier? CTOR LPAREN ParameterList? RPAREN SEMICOLON
+
+PropertyMemberDeclaration =
+    MemberVariableDeclaration
+  | MemberFunctionDeclaration
+(*
+  | MemberAccessorDeclaration
+*)
+
+(* ADDED: readonly? qmark? *)
+MemberVariableDeclaration =
+  AccessibilityModifier? STATIC? READONLY? PropertyName QMARK? TypeAnnotation? (* Initializer? *) SEMICOLON
+
+MemberFunctionDeclaration =
+(*
+    AccessibilityModifier? STATIC? PropertyName CallSignature LBRACE FunctionBody RBRACE
+  | *) AccessibilityModifier? STATIC? PropertyName CallSignature SEMICOLON
+
+(*
+MemberAccessorDeclaration =
+    AccessibilityModifier? STATIC? GetAccessor
+  | AccessibilityModifier? STATIC? SetAccessor
+
+IndexMemberDeclaration = IndexSignature SEMICOLON
+*)
+
+(*****************************************************************************
+ * TypeScript A.7 Enums
+ *****************************************************************************)
+
+EnumDeclaration = CONST? ENUM BindingIdentifier LBRACE EnumBody? RBRACE
+
+EnumBody = EnumMember (COMMA EnumMember)* COMMA?
+
+EnumMember = PropertyName (EQUALS EnumValue)?
+
+EnumValue = AssignmentExpression
+
+(*****************************************************************************
+ * TypeScript A.8 Namespaces
+ *****************************************************************************)
+
+NamespaceDeclaration =
+  NAMESPACE IdentifierPath LBRACE NamespaceElement* RBRACE
+
+IdentifierPath =
+    BindingIdentifier
+  | IdentifierPath PERIOD BindingIdentifier
+
+NamespaceElement =
+(*
+    Statement
+  | *) LexicalDeclaration
+  | FunctionDeclaration
+(*
+  | GeneratorDeclaration
+*)
+  | ClassDeclaration
+  | InterfaceDeclaration
+  | TypeAliasDeclaration
+  | EnumDeclaration
+  | NamespaceDeclaration
+(*
+  | AmbientDeclaration
+  | ImportAliasDeclaration
+*)
+  | ExportNamespaceElement
+
+ExportNamespaceElement =
+(*
+    EXPORT s VariableStatement
+  | *) EXPORT s LexicalDeclaration
+  | EXPORT s FunctionDeclaration
+(*
+  | EXPORT s GeneratorDeclaration
+*)
+  | EXPORT s ClassDeclaration
+  | EXPORT s InterfaceDeclaration
+  | EXPORT s TypeAliasDeclaration
+  | EXPORT s EnumDeclaration
+  | EXPORT s NamespaceDeclaration
+(*
+  | EXPORT s AmbientDeclaration
+  | EXPORT s ImportAliasDeclaration
+*)
+
+ImportAliasDeclaration =
+  IMPORT s BindingIdentifier EQUALS EntityName SEMICOLON
+
+EntityName =
+  NamespaceName ('.' IdentifierReference)?
+
+(*****************************************************************************
+ * TypeScript A.9 Scripts and Modules
+ *****************************************************************************)
+
+<DeclarationSourceFile> =
+    DeclarationScript
+  | DeclarationModule
+
+DeclarationScript =
+  DeclarationScriptElement*
+
+<DeclarationScriptElement> =
+    DeclarationElement
+  | AmbientModuleDeclaration
+
+DeclarationModule =
+  DeclarationModuleElement*
+
+<DeclarationModuleElement> =
+    DeclarationElement
+(*
+  | ImportDeclaration
+  | ImportAliasDeclaration
+*)
+  | ExportDeclarationElement
+(*
+  | ExportDefaultDeclarationElement
+*)
+  | ExportListDeclaration
+  | ExportAssignment
+
+<DeclarationElement> =
+    InterfaceDeclaration
+  | TypeAliasDeclaration
+  | NamespaceDeclaration
+(*
+  | AmbientDeclaration
+  | ImportAliasDeclaration
+*)
+
+<ExportDeclarationElement> =
+    EXPORT LexicalDeclaration (* ADDED *)
+  | EXPORT ClassDeclaration (* ADDED *)
+  | EXPORT EnumDeclaration (* ADDED *)
+  | EXPORT NamespaceDeclaration (* ADDED *)
+  | EXPORT InterfaceDeclaration
+  | EXPORT TypeAliasDeclaration
+(*
+  | EXPORT AmbientDeclaration
+  | EXPORT ImportAliasDeclaration
+
+ExportDefaultDeclarationElement =
+    EXPORT DEFAULT AmbientFunctionDeclaration
+  | EXPORT DEFAULT AmbientClassDeclaration
+  | EXPORT DEFAULT IdentifierReference SEMICOLON
+*)
+
+ExportListDeclaration =
+    EXPORT STAR FromClause SEMICOLON
+  | EXPORT ExportClause FromClause SEMICOLON
+  | EXPORT ExportClause SEMICOLON
+
+ExportAssignment =
+    EXPORT EQUALS IdentifierReference SEMICOLON
+
+(*****************************************************************************
+ * TypeScript A.10 Ambients
+ *****************************************************************************)
+
+AmbientModuleDeclaration =
+  DECLARE MODULE StringLiteral LBRACE DeclarationModule RBRACE
+
+(*****************************************************************************
+ * Tokens
+ *****************************************************************************)
+
+ANY        = s-opt <'any'>
+BOOLEAN    = s-opt <'boolean'>
+CLASS      = s-opt <'class'>
+CONST      = s-opt <'const'>
+CTOR       = s-opt <'constructor'>
+DECLARE    = s-opt <'declare'>
+DEFAULT    = s-opt <'default'>
+ENUM       = s-opt <'enum'>
+EXPORT     = s-opt <'export'>
+EXTENDS    = s-opt <'extends'>
+FALSE      = s-opt <'false'>
+FROM       = s-opt <'from'>
+FUNCTION   = s-opt <'function'>
+IMPLEMENTS = s-opt <'implements'>
+IMPORT     = s-opt <'import'>
+INTERFACE  = s-opt <'interface'>
+LET        = s-opt <'let'>
+MODULE     = s-opt <'module'>
+NAMESPACE  = s-opt <'namespace'>
+NEW        = s-opt <'new'>
+NULL       = s-opt <'null'>
+NUMBER     = s-opt <'number'>
+PERIOD     = s-opt <'.'>
+PRIVATE    = s-opt <'private'>
+PROTECTED  = s-opt <'protected'>
+PUBLIC     = s-opt <'public'>
+READONLY   = s-opt <'readonly'>
+STAR       = s-opt <'star'>
+STATIC     = s-opt <'static'>
+STRING     = s-opt <'string'>
+SYMBOL     = s-opt <'symbol'>
+THIS       = s-opt <'this'>
+TRUE       = s-opt <'true'>
+TYPE       = s-opt <'type'>
+TYPEOF     = s-opt <'typeof'>
+UNDEFINED  = s-opt <'undefined'>
+VOID       = s-opt <'void'>
+
+AMP       = s-opt <'&'>
+ARROW     = s-opt <'=>'>
+BANG      = s-opt <'!'>
+BAR       = s-opt <'|'>
+COLON     = s-opt <':'>
+COMMA     = s-opt <','>
+ELLIPSIS  = s-opt <'...'>
+EQUALS    = s-opt <'='>
+GT        = s-opt <'>'>
+LBRACE    = s-opt <'{'>
+LBRACKET  = s-opt <'['>
+LPAREN    = s-opt <'('>
+LT        = s-opt <'<'>
+MINUS     = s-opt <'-'>
+PLUS      = s-opt <'+'>
+QMARK     = s-opt <'?'>
+RBRACE    = s-opt <'}'>
+RBRACKET  = s-opt <']'>
+RPAREN    = s-opt <')'>
+SEMICOLON = s-opt <';'>
+TILDE     = s-opt <'~'>
+
+s     = (WhiteSpace | Comment)+
+s-opt = (WhiteSpace | Comment)*
