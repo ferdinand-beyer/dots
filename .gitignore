@@ -4,4 +4,9 @@
 .lsp/
 .portal/
 
+.shadow-cljs/
+node_modules/
+
+dist/
+
 *.pdf

@@ -1,0 +1,6 @@
+{:deps {:aliases [:cljs]}
+ :builds
+ {:dots
+  {:target :node-script
+   :main dots.main/main
+   :output-to "dist/dots.js"}}}

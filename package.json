@@ -1,0 +1,14 @@
+{
+  "private": true,
+  "dependencies": {
+    "@microsoft/tsdoc": "^0.14.2",
+    "typescript": "^4.8.4"
+  },
+  "devDependencies": {
+    "shadow-cljs": "^2.20.3"
+  },
+  "scripts": {
+    "start": "shadow-cljs start",
+    "stop": "shadow-cljs stop"
+  }
+}

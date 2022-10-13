@@ -1,4 +1,13 @@
 {:paths ["src" "resources"]
  :deps {instaparse/instaparse {:mvn/version "1.4.12"}}
- :aliases {:dev {:extra-paths ["dev"]
-                 :extra-deps {djblue/portal {:mvn/version "0.26.0"}}}}}
+ :aliases
+ {:dev
+  {:extra-paths ["dev"]
+   :extra-deps {djblue/portal {:mvn/version "0.26.0"}}}
+
+  :cljs
+  {:extra-deps {applied-science/js-interop {:mvn/version "0.3.3"}
+                thheller/shadow-cljs       {:mvn/version "2.20.3"}}}
+
+  :shadow-watch
+  {:main-opts ["-m" "shadow.cljs.devtools.cli" "watch" "dots"]}}}
