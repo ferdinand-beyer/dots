@@ -1,4 +1,4 @@
-(ns dots.parser
+(ns experimental
   (:require #?(:clj  [instaparse.core :as insta :refer [defparser]]
                :cljs [instaparse.core :as insta :refer-macros [defparser]])
             #?(:clj [clojure.java.io :as io]
@@ -19,3 +19,7 @@
 
 (defn parse [s]
   (insta/parse dots s))
+
+(comment
+  #?(:clj
+     (tap> (parse (slurp "examples/vscode.d.ts")))))

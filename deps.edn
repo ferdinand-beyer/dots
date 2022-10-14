@@ -1,9 +1,13 @@
 {:paths ["src" "resources"]
- :deps {instaparse/instaparse {:mvn/version "1.4.12"}}
+ :deps {camel-snake-kebab/camel-snake-kebab {:mvn/version "0.4.3"}}
+
  :aliases
  {:dev
   {:extra-paths ["dev"]
    :extra-deps {djblue/portal {:mvn/version "0.26.0"}}}
+
+  :experimental
+  {:extra-deps {instaparse/instaparse {:mvn/version "1.4.12"}}}
 
   :cljs
   {:extra-deps {applied-science/js-interop {:mvn/version "0.3.3"}
