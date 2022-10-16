@@ -13,5 +13,5 @@
   {:extra-deps {applied-science/js-interop {:mvn/version "0.3.3"}
                 thheller/shadow-cljs       {:mvn/version "2.20.3"}}}
 
-  :shadow-watch
+  :watch
   {:main-opts ["-m" "shadow.cljs.devtools.cli" "watch" "dots"]}}}

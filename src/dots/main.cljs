@@ -1,103 +1,207 @@
 (ns dots.main
-  (:require ["fs" :as fs]
-            ["typescript" :as ts]
+  (:require ["typescript" :as ts]
             [applied-science.js-interop :as j]
-            [clojure.string :as str]
-            [goog.object :as gobj]))
+            [camel-snake-kebab.core :as csk]
+            [clojure.string :as str]))
 
-;; This will return 'FirstStatement' for 'VariableDeclaration'
-(defn- kind->str [kind]
-  (gobj/get ts/SyntaxKind kind))
+(def proxy-file-name "dots$proxy.d.ts")
 
-(defn- slurp [path]
-  (.toString (fs/readFileSync path)))
+(defn- proxy-file-name? [file-name]
+  (= file-name proxy-file-name))
 
-(defn- parse [filepath]
-  (ts/createSourceFile filepath (slurp filepath) (j/get ts/ScriptTarget :ESNext) true))
+(defn- proxy-source-text [module-name references]
+  (str (str/join
+        (for [path references]
+          (str "/// <reference path=\"" path "\" />\n")))
+       "export * from \"" module-name "\";\n"))
 
-(defn- dump-node
-  ([node] (dump-node node ""))
-  ([node indent]
-   (println (str indent (kind->str (j/get node :kind)))
-            (j/get-in node [:name :text]))))
+;; ? Should we construct the SourceFile directly instead or parsing?
+(defn- create-proxy-source-file [module-name references target-or-opts]
+  (ts/createSourceFile proxy-file-name
+                       (proxy-source-text module-name references)
+                       target-or-opts
+                       true))
 
-(defn- dump-tree
-  ([node]
-   (dump-tree node nil))
-  ([node max-depth]
-   (dump-tree node 0 max-depth))
-  ([node depth max-depth]
-   (dump-node node (str/join (repeat depth "  ")))
-   (when (or (nil? max-depth) (< depth max-depth))
-     (j/call node :forEachChild #(dump-tree % (inc depth) max-depth)))))
+(defn- proxy-compiler-host
+  ([compiler-opts module-name]
+   (proxy-compiler-host compiler-opts module-name nil))
+  ([compiler-opts module-name references]
+   (let [host (ts/createCompilerHost compiler-opts true)]
+     (j/call js/Object :assign #js {} host
+             #js {:fileExists (fn [file-name]
+                                (or (proxy-file-name? file-name)
+                                    (j/call host :fileExists file-name)))
+                  :getSourceFile
+                  (fn [file-name target-or-opts on-error create?]
+                    (if (proxy-file-name? file-name)
+                      (create-proxy-source-file module-name references target-or-opts)
+                      (j/call host :getSourceFile file-name target-or-opts on-error create?)))}))))
 
-;; Also available as the undocumented `jsDoc` property
-(defn- jsdoc-nodes [node]
-  (->> (j/call node :getChildren)
-       (filter ts/isJSDoc)))
+(defn- create-program
+  [module-name {:keys [compiler-opts references]
+                :or   {compiler-opts #js {}}}]
+  (let [host (proxy-compiler-host compiler-opts module-name references)]
+    (ts/createProgram #js [proxy-file-name] compiler-opts host)))
 
-(defn- doc-text [node]
-  (->> (jsdoc-nodes node)
-       (map #(ts/getTextOfJSDocComment (j/get % :comment)))
-       str/join))
+(defn- module-symbol [program checker]
+  (let [node (-> program
+                 (j/call :getSourceFile proxy-file-name)
+                 (j/get :statements)
+                 first
+                 (j/get :moduleSpecifier))]
+    (j/call checker :getSymbolAtLocation node)))
 
-(defmulti walk (fn [_ctx node] (j/get node :kind)))
+(defn- symbol-name [sym]
+  (j/call sym :getName))
 
-(defn- walk-children [ctx node]
-  (j/call node :forEachChild (partial walk ctx)))
+(defn- symbol-flags [sym]
+  (j/call sym :getFlags))
 
-(defmethod walk :default [_ _])
+(defn- symbol-decl [sym]
+  (j/get sym :valueDeclaration))
 
-(defmethod walk (j/get ts/SyntaxKind :SourceFile)
-  [ctx node]
-  (doseq [stmt (j/get node :statements)]
-    (walk ctx stmt)))
+(defn- doc-string [sym]
+  (let [parts (j/call sym :getDocumentationComment)]
+    (when (seq parts)
+      (ts/displayPartsToString parts))))
 
-(defmethod walk (j/get ts/SyntaxKind :ModuleDeclaration)
-  [ctx node]
-  (let [name (j/get-in node [:name :text])]
-    (println "Module:" ctx name)
-    (when-let [body (j/get node :body)]
-      (walk (update ctx :module conj name) body))))
+(defn- module-ns-name [sym]
+  (let [n (symbol-name sym)]
+    (-> (symbol-name sym)
+        (subs 1 (dec (count n)))
+        (str/replace "/" ".")
+        (str/replace #"\W+" "$")
+        (csk/->kebab-case-string))))
 
-(defmethod walk (j/get ts/SyntaxKind :ModuleBlock)
-  [ctx node]
-  (doseq [stmt (j/get node :statements)]
-    (walk ctx stmt)))
+(defn- module-exports [{:keys [checker]} sym]
+  (j/call checker :getExportsOfModule sym))
 
-(defmethod walk (j/get ts/SyntaxKind :InterfaceDeclaration)
-  [ctx node]
-  (let [name (j/get-in node [:name :text])]
-    (println "----- INTERFACE:" name "-----")
-    (println "Doc:" (doc-text node))
-    (doseq [member (j/get node :members)]
-      (walk ctx member))))
+(defn- symbol-type [{:keys [checker]} sym]
+  (when-let [decl (symbol-decl sym)]
+    (j/call checker :getTypeOfSymbolAtLocation sym decl)))
 
-(defn path [node]
-  (->> (iterate #(j/get % :parent) node)
-       (take-while some?)
-       reverse))
+(declare adapt-symbol)
 
-(defn dump-path [node]
-  (run! dump-node (path node)))
+(defn- adapt-module [ctx sym]
+  (let [n   (module-ns-name sym)
+        ns  {:name n
+             :symbol sym
+             :doc (doc-string sym)
+             :vars {}
+             :var-order []}
+        ctx (-> ctx
+                (assoc-in [:namespaces n] ns)
+                (update :ns-stack conj n))]
+    (-> (reduce adapt-symbol ctx (module-exports ctx sym))
+        (update :ns-stack pop))))
 
-(defn node-seq [node]
-  (tree-seq #(pos? (j/call % :getChildCount)) #(j/call % :getChildren) node))
+;; ? The module-name is a 'import name'.  We can get the canonical name
+;;   to the resolved module from the symbol.  We also need to decide on
+;;   a Clojure alias for it, to generate the namespace form like:
+;;   `(:require ["ts-name" :as clj-alias])`
+(defn- adapt [module-name opts]
+  (let [program    (create-program module-name opts)
+        checker    (j/call program :getTypeChecker)
+        module-sym (module-symbol program checker)
+        ctx        {:module-name module-name
+                    :program program
+                    :checker checker
+                    :module-sym module-sym
+                    :namespaces {}
+                    :ns-stack []}]
+    (adapt-module ctx module-sym)))
 
-(defn main []
-  (let [source-file (parse "examples/vscode.d.ts")]
-    (walk {:module []
-           :namespace []}
-          source-file)))
+(defn- flag? [flags test]
+  (not= 0 (bit-and flags test)))
+
+(defn- symbol-flag? [sym test]
+  (flag? (symbol-flags sym) test))
+
+(defn- variable? [sym]
+  (symbol-flag? sym (j/get ts/SymbolFlags :Variable)))
+
+(defn- function? [sym]
+  (symbol-flag? sym (j/get ts/SymbolFlags :Function)))
+
+(defn- class? [sym]
+  (symbol-flag? sym (j/get ts/SymbolFlags :Class)))
+
+(defn- interface? [sym]
+  (symbol-flag? sym (j/get ts/SymbolFlags :Interface)))
+
+(defn- enum? [sym]
+  (symbol-flag? sym (j/get ts/SymbolFlags :Enum)))
+
+(defn- module? [sym]
+  (symbol-flag? sym (j/get ts/SymbolFlags :Module)))
+
+(defn- type-alias? [sym]
+  (symbol-flag? sym (j/get ts/SymbolFlags :TypeAlias)))
+
+(defn- alias? [sym]
+  (symbol-flag? sym (j/get ts/SymbolFlags :Alias)))
+
+(defn modifier-flag? [decl flag]
+  (flag? (ts/getCombinedModifierFlags decl) flag))
+
+(defn- add-var-to-namespace-map [ns-map var-map]
+  (let [var-name (:name var-map)]
+    (-> ns-map
+        (assoc-in [:vars var-name] var-map)
+        (update :var-order conj var-name))))
+
+;; TODO: Need to ensure not to overwrite existing vars.  Maybe provide
+;; a conflict resolution strategy?
+(defn- add-var [ctx var-map]
+  (update-in ctx [:namespaces (peek (:ns-stack ctx))]
+             add-var-to-namespace-map var-map))
+
+(defn- adapt-variable [ctx sym]
+  (add-var ctx {:name (symbol-name sym)
+                :symbol sym
+                :doc (doc-string sym)
+                :kind :variable
+                ;; The "const" keyword seems to be eaten by TypeScript.
+                ;; Assume "export let" is not allowed and "export" is
+                ;; always "const"?!
+                ;; TODO: Check differences in generated AST symbol for
+                ;; let and const!
+                :const? (modifier-flag?
+                         (symbol-decl sym)
+                         (bit-or ts/ModifierFlags.Const
+                                 ts/ModifierFlags.Export))}))
+
+(defn- adapt-function [ctx sym]
+  ;; TODO: Create :arglists meta
+  (add-var ctx {:name (symbol-name sym)
+                :symbol sym
+                :doc (doc-string sym)
+                :kind :function}))
+
+(defn- adapt-symbol [ctx sym]
+  ;; Dispatch on `SymbolFlags.ModuleMember` bit mask.
+  (cond
+    (variable? sym) (adapt-variable ctx sym)
+    (function? sym) (adapt-function ctx sym)
+    (class? sym) ctx
+    (interface? sym) ctx
+    (enum? sym) ctx
+    (module? sym) ctx
+    (type-alias? sym) ctx
+    (alias? sym) ctx
+    ;; Add :diagnostics to ctx?
+    :else (do (println "Warning: Unexpected exported symbol"
+                       (symbol-name sym) (symbol-flags sym))
+              ctx)))
+
+(defn ^:export main []
+  (println "Hello, Dots."))
+
+(when goog/DEBUG
+  (enable-console-print!))
 
 (comment
-  (println "\n\n")
+  (println)
 
-  (->> (parse "examples/vscode.d.ts")
-       node-seq
-       (filter ts/isFunctionDeclaration)
-       first
-       dump-path)
-
-  (main)
+  (:namespaces (adapt "vscode" nil))
   )
