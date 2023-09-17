@@ -1,0 +1,4 @@
+{:paths ["src"]
+ :deps {applied-science/js-interop {:mvn/version "0.3.3"}
+        camel-snake-kebab/camel-snake-kebab {:mvn/version "0.4.3"}
+        dots/typescript {:local/root "../dots-typescript"}}}

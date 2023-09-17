@@ -1,8 +1,14 @@
 (ns dots.main
-  (:require ["typescript" :as ts]
-            [applied-science.js-interop :as j]
+  (:require [applied-science.js-interop :as j]
             [camel-snake-kebab.core :as csk]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [dots.typescript :as ts]
+            [dots.typescript.import-declaration :as import-declaration]
+            [dots.typescript.modifier-flags :as modifier-flags]
+            [dots.typescript.program :as program]
+            [dots.typescript.source-file :as source-file]
+            [dots.typescript.symbol :as symbol]
+            [dots.typescript.type-checker :as type-checker]))
 
 (def proxy-file-name "dots$proxy.d.ts")
 
@@ -17,16 +23,17 @@
 
 ;; ? Should we construct the SourceFile directly instead or parsing?
 (defn- create-proxy-source-file [module-name references target-or-opts]
-  (ts/createSourceFile proxy-file-name
-                       (proxy-source-text module-name references)
-                       target-or-opts
-                       true))
+  (ts/create-source-file proxy-file-name
+                         (proxy-source-text module-name references)
+                         target-or-opts
+                         true))
 
 (defn- proxy-compiler-host
+  "Creates a CompilerHost that resolves our special proxy file."
   ([compiler-opts module-name]
    (proxy-compiler-host compiler-opts module-name nil))
   ([compiler-opts module-name references]
-   (let [host (ts/createCompilerHost compiler-opts true)]
+   (let [host (ts/create-compiler-host compiler-opts true)]
      (j/call js/Object :assign #js {} host
              #js {:fileExists (fn [file-name]
                                 (or (proxy-file-name? file-name)
@@ -38,47 +45,39 @@
                       (j/call host :getSourceFile file-name target-or-opts on-error create?)))}))))
 
 (defn- create-program
+  "Creates a program that "
   [module-name {:keys [compiler-opts references]
                 :or   {compiler-opts #js {}}}]
   (let [host (proxy-compiler-host compiler-opts module-name references)]
-    (ts/createProgram #js [proxy-file-name] compiler-opts host)))
+    (ts/create-program #js [proxy-file-name] compiler-opts host)))
 
 (defn- module-symbol [program checker]
   (let [node (-> program
-                 (j/call :getSourceFile proxy-file-name)
-                 (j/get :statements)
+                 (program/get-source-file proxy-file-name)
+                 source-file/statements
                  first
-                 (j/get :moduleSpecifier))]
-    (j/call checker :getSymbolAtLocation node)))
-
-(defn- symbol-name [sym]
-  (j/call sym :getName))
-
-(defn- symbol-flags [sym]
-  (j/call sym :getFlags))
-
-(defn- symbol-decl [sym]
-  (j/get sym :valueDeclaration))
+                 import-declaration/module-specifier)]
+    (type-checker/get-symbol-at-location checker node)))
 
 (defn- doc-string [sym]
-  (let [parts (j/call sym :getDocumentationComment)]
+  (let [parts (symbol/documentation-comment sym)]
     (when (seq parts)
-      (ts/displayPartsToString parts))))
+      (ts/display-parts-to-string parts))))
 
 (defn- module-ns-name [sym]
-  (let [n (symbol-name sym)]
-    (-> (symbol-name sym)
+  (let [n (symbol/name sym)]
+    (-> n
         (subs 1 (dec (count n)))
         (str/replace "/" ".")
         (str/replace #"\W+" "$")
         (csk/->kebab-case-string))))
 
 (defn- module-exports [{:keys [checker]} sym]
-  (j/call checker :getExportsOfModule sym))
+  (type-checker/get-exports-of-module checker sym))
 
 (defn- symbol-type [{:keys [checker]} sym]
-  (when-let [decl (symbol-decl sym)]
-    (j/call checker :getTypeOfSymbolAtLocation sym decl)))
+  (when-let [decl (symbol/value-declaration sym)]
+    (type-checker/get-type-of-symbol-at-location checker sym decl)))
 
 (declare adapt-symbol)
 
@@ -101,7 +100,7 @@
 ;;   `(:require ["ts-name" :as clj-alias])`
 (defn- adapt [module-name opts]
   (let [program    (create-program module-name opts)
-        checker    (j/call program :getTypeChecker)
+        checker    (program/get-type-checker program)
         module-sym (module-symbol program checker)
         ctx        {:module-name module-name
                     :program program
@@ -111,38 +110,8 @@
                     :ns-stack []}]
     (adapt-module ctx module-sym)))
 
-(defn- flag? [flags test]
-  (not= 0 (bit-and flags test)))
-
-(defn- symbol-flag? [sym test]
-  (flag? (symbol-flags sym) test))
-
-(defn- variable? [sym]
-  (symbol-flag? sym (j/get ts/SymbolFlags :Variable)))
-
-(defn- function? [sym]
-  (symbol-flag? sym (j/get ts/SymbolFlags :Function)))
-
-(defn- class? [sym]
-  (symbol-flag? sym (j/get ts/SymbolFlags :Class)))
-
-(defn- interface? [sym]
-  (symbol-flag? sym (j/get ts/SymbolFlags :Interface)))
-
-(defn- enum? [sym]
-  (symbol-flag? sym (j/get ts/SymbolFlags :Enum)))
-
-(defn- module? [sym]
-  (symbol-flag? sym (j/get ts/SymbolFlags :Module)))
-
-(defn- type-alias? [sym]
-  (symbol-flag? sym (j/get ts/SymbolFlags :TypeAlias)))
-
-(defn- alias? [sym]
-  (symbol-flag? sym (j/get ts/SymbolFlags :Alias)))
-
 (defn modifier-flag? [decl flag]
-  (flag? (ts/getCombinedModifierFlags decl) flag))
+  (not (zero? (bit-and (ts/get-combined-modifier-flags decl) flag))))
 
 (defn- add-var-to-namespace-map [ns-map var-map]
   (let [var-name (:name var-map)]
@@ -157,7 +126,7 @@
              add-var-to-namespace-map var-map))
 
 (defn- adapt-variable [ctx sym]
-  (add-var ctx {:name (symbol-name sym)
+  (add-var ctx {:name (symbol/name sym)
                 :symbol sym
                 :doc (doc-string sym)
                 :kind :variable
@@ -167,31 +136,32 @@
                 ;; TODO: Check differences in generated AST symbol for
                 ;; let and const!
                 :const? (modifier-flag?
-                         (symbol-decl sym)
-                         (bit-or ts/ModifierFlags.Const
-                                 ts/ModifierFlags.Export))}))
+                         (symbol/value-declaration sym)
+                         (bit-or modifier-flags/const
+                                 modifier-flags/export))}))
 
 (defn- adapt-function [ctx sym]
   ;; TODO: Create :arglists meta
-  (add-var ctx {:name (symbol-name sym)
+  (add-var ctx {:name (symbol/name sym)
                 :symbol sym
                 :doc (doc-string sym)
                 :kind :function}))
 
 (defn- adapt-symbol [ctx sym]
+  (println "Found:" (symbol/name sym))
   ;; Dispatch on `SymbolFlags.ModuleMember` bit mask.
   (cond
-    (variable? sym) (adapt-variable ctx sym)
-    (function? sym) (adapt-function ctx sym)
-    (class? sym) ctx
-    (interface? sym) ctx
-    (enum? sym) ctx
-    (module? sym) ctx
-    (type-alias? sym) ctx
-    (alias? sym) ctx
+    (symbol/variable? sym) (adapt-variable ctx sym)
+    (symbol/function? sym) (adapt-function ctx sym)
+    (symbol/class? sym) ctx
+    (symbol/interface? sym) ctx
+    (symbol/enum? sym) ctx
+    (symbol/module? sym) ctx
+    (symbol/type-alias? sym) ctx
+    (symbol/alias? sym) ctx
     ;; Add :diagnostics to ctx?
     :else (do (println "Warning: Unexpected exported symbol"
-                       (symbol-name sym) (symbol-flags sym))
+                       (symbol/name sym) (symbol/flags sym))
               ctx)))
 
 (defn ^:export main []
@@ -202,6 +172,5 @@
 
 (comment
   (println)
-
   (:namespaces (adapt "vscode" nil))
   )

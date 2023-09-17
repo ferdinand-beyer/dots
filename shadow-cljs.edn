@@ -1,4 +1,4 @@
-{:deps {:aliases [:cljs]}
+{:deps {:aliases [:shadow]}
  :builds
  {:dots
   {:target :node-script
