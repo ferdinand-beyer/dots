@@ -40,6 +40,9 @@
   (^"SymbolDisplayPart[]" [^Symbol sym ^TypeChecker type-checker]
    (.getDocumentationComment sym type-checker)))
 
+;; TODO: Code below is an extension to the API -- move to dots.*
+;; TODO: Map flags to keywords / sets of keywords?
+
 (defn flag? [sym test]
   (not (zero? (bit-and (flags sym) test))))
 
