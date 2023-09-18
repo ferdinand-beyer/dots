@@ -11,7 +11,7 @@
 
 ;; export function createCompilerHost(options: CompilerOptions, setParentNodes?: boolean): CompilerHost;
 (defn create-compiler-host
-  [^CompilerOptions options set-parent-nodes?]
+  ^CompilerHost [^CompilerOptions options set-parent-nodes?]
   (ts/createCompilerHost options set-parent-nodes?))
 
 (defn create-program

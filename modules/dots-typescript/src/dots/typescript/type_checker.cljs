@@ -3,8 +3,15 @@
 (defn get-type-of-symbol-at-location
   ^Type [^TypeChecker type-checker ^Symbol symbol ^Node node]
   (.getTypeOfSymbolAtLocation type-checker symbol node))
-;;getDeclaredTypeOfSymbol(symbol: Symbol): Type;
-;;getPropertiesOfType(type: Type): Symbol[];
+
+(defn get-declared-type-of-symbol
+  ^Type [^TypeChecker type-checker ^Symbol sym]
+  (.getDeclaredTypeOfSymbol type-checker sym))
+
+(defn get-properties-of-type
+  ^"Symbol[]" [^TypeChecker type-checker ^Symbol sym]
+  (.getPropertiesOfType type-checker sym))
+
 ;;getPropertyOfType(type: Type, propertyName: string): Symbol | undefined;
 ;;getPrivateIdentifierPropertyOfType(leftType: Type, name: string, location: Node): Symbol | undefined;
 ;;getIndexInfoOfType(type: Type, kind: IndexKind): IndexInfo | undefined;
@@ -37,9 +44,11 @@
 ;;/** Note that the resulting nodes cannot be checked. */
 ;;typeParameterToDeclaration(parameter: TypeParameter, enclosingDeclaration: Node | undefined, flags: NodeBuilderFlags | undefined): TypeParameterDeclaration | undefined;
 ;;getSymbolsInScope(location: Node, meaning: SymbolFlags): Symbol[];
+
 (defn get-symbol-at-location
   ^"Symbol | undefined" [^TypeChecker type-checker ^Node node]
   (.getSymbolAtLocation type-checker node))
+
 ;;getSymbolsOfParameterPropertyDeclaration(parameter: ParameterDeclaration, parameterName: string): Symbol[];
 ;;/**
 ;;* The function returns the value (local variable) symbol of an identifier in the short-hand property assignment.
@@ -62,9 +71,22 @@
 ;;getTypeFromTypeNode(node: TypeNode): Type;
 ;;signatureToString(signature: Signature, enclosingDeclaration?: Node, flags?: TypeFormatFlags, kind?: SignatureKind): string;
 ;;typeToString(type: Type, enclosingDeclaration?: Node, flags?: TypeFormatFlags): string;
-;;symbolToString(symbol: Symbol, enclosingDeclaration?: Node, meaning?: SymbolFlags, flags?: SymbolFormatFlags): string;
+
+(defn symbol-to-string
+  ([^TypeChecker type-checker symbol]
+   (.symbolToString type-checker symbol))
+  ([^TypeChecker type-checker symbol enclosing-declaration]
+   (.symbolToString type-checker symbol enclosing-declaration))
+  ([^TypeChecker type-checker symbol enclosing-declaration meaning]
+   (.symbolToString type-checker symbol enclosing-declaration meaning))
+  ([^TypeChecker type-checker symbol enclosing-declaration meaning flags]
+   (.symbolToString type-checker symbol enclosing-declaration meaning flags)))
+
 ;;typePredicateToString(predicate: TypePredicate, enclosingDeclaration?: Node, flags?: TypeFormatFlags): string;
-;;getFullyQualifiedName(symbol: Symbol): string;
+
+(defn get-fully-qualified-name [^TypeChecker type-checker ^Symbol sym]
+  (.getFullyQualifiedName type-checker sym))
+
 ;;getAugmentedPropertiesOfType(type: Type): Symbol[];
 ;;getRootSymbols(symbol: Symbol): readonly Symbol[];
 ;;getSymbolOfExpando(node: Node, allowDeclaration: boolean): Symbol | undefined;
@@ -86,9 +108,11 @@
 ;;getAliasedSymbol(symbol: Symbol): Symbol;
 ;;/** Follow a *single* alias to get the immediately aliased symbol. */
 ;;getImmediateAliasedSymbol(symbol: Symbol): Symbol | undefined;
+
 (defn get-exports-of-module
   ^"Symbol[]" [^TypeChecker type-checker ^Symbol module-symbol]
   (.getExportsOfModule type-checker module-symbol))
+
 ;;getJsxIntrinsicTagNamesAt(location: Node): Symbol[];
 ;;isOptionalParameter(node: ParameterDeclaration): boolean;
 ;;getAmbientModules(): Symbol[];

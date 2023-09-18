@@ -28,6 +28,9 @@
 (defn name [^Symbol sym]
   (.getName sym))
 
+(defn declarations [^Symbol sym]
+  (.getDeclarations sym))
+
 (defn value-declaration [^Symbol sym]
   (.-valueDeclaration sym))
 
@@ -63,3 +66,9 @@
 
 (defn alias? [sym]
   (flag? sym symbol-flags/alias))
+
+(defn property? [sym]
+  (flag? sym symbol-flags/property))
+
+(defn method? [sym]
+  (flag? sym symbol-flags/method))
