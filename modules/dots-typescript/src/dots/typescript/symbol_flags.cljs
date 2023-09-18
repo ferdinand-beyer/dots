@@ -136,6 +136,12 @@
           (recur (conj bits bit) (bit-shift-left bit 1)))
         bits)))
 
+  (defn bits [field]
+    (->> (iterate #(bit-shift-left % 1) 1)
+         (take-while #(<= % field))
+         (map #(bit-and field %))
+         (remove zero?)))
+
   (bits 98308)
 
   (def kwflags (update-vals flags #(into #{} (map rflags) (bits %))))
