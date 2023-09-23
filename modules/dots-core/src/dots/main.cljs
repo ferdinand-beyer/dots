@@ -4,7 +4,7 @@
 
 (defn- experiment []
   (let [env (env/of-modules ["vscode"])]
-    (extract/extract env (get-in env [:module-symbols "vscode"]))))
+    (extract/extract-module env (get-in env [:module-symbols "vscode"]))))
 
 (defn ^:export main []
   (println "Hello, Dots."))
@@ -15,5 +15,5 @@
 (comment
   (def vscode (experiment))
   (run! prn (sort (keys (:exports vscode))))
-  (get-in vscode [:exports "Command"])
+  (get-in vscode [:exports "Uri"])
   )

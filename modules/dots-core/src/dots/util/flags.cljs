@@ -11,7 +11,6 @@
 
 (defn flags-type [m]
   (let [r (into {} (map (juxt val key)) m)]
-    ;(update-vals flags #(into #{} (map rflags) (bits %)))
     (with-meta m {::r r})))
 
 (defn- reverse-map [ft]
@@ -62,8 +61,8 @@
   IEquiv
   (-equiv [_ other]
     (and (instance? Flag other)
-         (= name (.name other))
-         (= val (.val other))))
+         (= name (.name ^Flag other))
+         (= val (.val ^Flag other))))
 
   IHash
   (-hash [_] (hash flags))
@@ -94,11 +93,11 @@
 (deftype FlagSetIter [iter]
   Object
   (hasNext [_]
-    (.hasNext iter))
+    #_(.hasNext iter))
   (next [_]
-    (if ^boolean (.hasNext iter)
-      (.-key (.next iter))
-      (throw (js/Error. "No such element"))))
+    #_(if ^boolean (.hasNext iter)
+        (.-key (.next iter))
+        (throw (js/Error. "No such element"))))
   (remove [_] (js/Error. "Unsupported operation")))
 
 (deftype FlagSet [meta ft flags]
@@ -248,9 +247,13 @@
            :PropertyOrAccessor 98308
            :ClassMember 106500}))
 
+  (def expanded
+    (update-vals t #(into #{} (map (reverse-map t)) (bits %))))
+  (:ClassMember expanded)
+
   (seq (flags-seq t 106500))
   (seq (flag-set t :ExportHasLocal))
-  (seq (flag-set t :ClassMember))
+  (seq (flag-set t :ModuleMember))
 
   (str (flag-set t :ClassMember))
 

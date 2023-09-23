@@ -45,3 +45,11 @@
    (ts/resolveModuleName module-name containing-file compiler-options host cache redirected-reference))
   (^ResolvedModuleWithFailedLookupLocations [module-name containing-file ^CompilerOptions compiler-options ^ModuleResolutionHost host ^ModuleResolutionCache cache ^ResolvedProjectReference redirected-reference ^"ModuleKind.CommonJS | ModuleKind.ESNext" resolution-mode]
    (ts/resolveModuleName module-name containing-file compiler-options host cache redirected-reference resolution-mode)))
+
+(defn get-pre-emit-diagnostics
+  (^"readonly Diagnostic[]" [^Program program]
+   (ts/getPreEmitDiagnostics program))
+  (^"readonly Diagnostic[]" [^Program program ^SourceFile source-file]
+   (ts/getPreEmitDiagnostics program source-file))
+  (^"readonly Diagnostic[]" [^Program program ^SourceFile source-file ^CancellationToken cancellation-token]
+   (ts/getPreEmitDiagnostics program source-file cancellation-token)))

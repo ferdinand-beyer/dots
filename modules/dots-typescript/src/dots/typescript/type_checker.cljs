@@ -4,6 +4,10 @@
   ^Type [^TypeChecker type-checker ^Symbol symbol ^Node node]
   (.getTypeOfSymbolAtLocation type-checker symbol node))
 
+(defn get-type-of-symbol
+  ^Type [^TypeChecker type-checker ^Symbol symbol]
+  (.getTypeOfSymbolAtLocation type-checker symbol))
+
 (defn get-declared-type-of-symbol
   ^Type [^TypeChecker type-checker ^Symbol sym]
   (.getDeclaredTypeOfSymbol type-checker sym))
@@ -56,21 +60,40 @@
 ;;*/
 ;;getShorthandAssignmentValueSymbol(location: Node | undefined): Symbol | undefined;
 ;;getExportSpecifierLocalTargetSymbol(location: ExportSpecifier | Identifier): Symbol | undefined;
-;;/**
-;;* If a symbol is a local symbol with an associated exported symbol, returns the exported symbol.
-;;* Otherwise returns its input.
-;;* For example, at `export type T = number;`:
-;;*     - `getSymbolAtLocation` at the location `T` will return the exported symbol for `T`.
-;;*     - But the result of `getSymbolsInScope` will contain the *local* symbol for `T`, not the exported symbol.
-;;*     - Calling `getExportSymbolOfSymbol` on that local symbol will return the exported symbol.
-;;*/
-;;getExportSymbolOfSymbol(symbol: Symbol): Symbol;
+
+(defn get-export-symbol-of-symbol
+  "If a symbol is a local symbol with an associated exported symbol, returns the exported symbol.
+   Otherwise returns its input.
+   For example, at `export type T = number;`:
+       - `getSymbolAtLocation` at the location `T` will return the exported symbol for `T`.
+       - But the result of `getSymbolsInScope` will contain the *local* symbol for `T`, not the exported symbol.
+       - Calling `getExportSymbolOfSymbol` on that local symbol will return the exported symbol."
+  ^Symbol [^TypeChecker type-checker ^Symbol symbol]
+  (.getExportSymbolOfSymbol type-checker symbol))
+
 ;;getPropertySymbolOfDestructuringAssignment(location: Identifier): Symbol | undefined;
 ;;getTypeOfAssignmentPattern(pattern: AssignmentPattern): Type;
 ;;getTypeAtLocation(node: Node): Type;
 ;;getTypeFromTypeNode(node: TypeNode): Type;
 ;;signatureToString(signature: Signature, enclosingDeclaration?: Node, flags?: TypeFormatFlags, kind?: SignatureKind): string;
-;;typeToString(type: Type, enclosingDeclaration?: Node, flags?: TypeFormatFlags): string;
+
+(defn signature-to-string
+  ([^TypeChecker type-checker ^Signature signature]
+   (.typeToString type-checker signature))
+  ([^TypeChecker type-checker ^Signature signature ^Node enclosing-declaration]
+   (.typeToString type-checker signature enclosing-declaration))
+  ([^TypeChecker type-checker ^Signature signature ^Node enclosing-declaration flags]
+   (.typeToString type-checker signature enclosing-declaration flags))
+  ([^TypeChecker type-checker ^Signature signature ^Node enclosing-declaration flags kind]
+   (.typeToString type-checker signature enclosing-declaration flags kind)))
+
+(defn type-to-string
+  ([^TypeChecker type-checker ^Type type]
+   (.typeToString type-checker type))
+  ([^TypeChecker type-checker ^Type type ^Node enclosing-declaration]
+   (.typeToString type-checker type enclosing-declaration))
+  ([^TypeChecker type-checker ^Type type ^Node enclosing-declaration flags]
+   (.typeToString type-checker type enclosing-declaration flags)))
 
 (defn symbol-to-string
   ([^TypeChecker type-checker symbol]
