@@ -157,7 +157,7 @@
 
 (defn type-of-symbol
   ^Type [^TypeChecker type-checker ^Symbol symbol]
-  (.getTypeOfSymbolAtLocation type-checker symbol))
+  (.getTypeOfSymbol type-checker symbol))
 
 (defn declared-type-of-symbol
   ^Type [^TypeChecker type-checker ^Symbol sym]

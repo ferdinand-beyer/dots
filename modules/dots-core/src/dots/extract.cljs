@@ -28,30 +28,12 @@
 (defn- mask-flags [sym mask]
   (bit-and mask (symbol/flags sym)))
 
-(defn- type-at-decl [env sym]
-  (type-checker/type-of-symbol-at-location
-   (:type-checker env) sym (symbol/value-declaration sym)))
-
 (defn- debug-type [{:keys [type-checker]} type]
   (let [fqn (some->> (type/symbol type)
                      (type-checker/fully-qualified-name type-checker))]
     (cond-> {:str (type-checker/type-to-string type-checker type)}
       (some? fqn) (assoc :fqn fqn))))
 
-;; Types of symbol
-;;
-;; (1) type-of-symbol
-;; (2) declared-type-of-symbol
-;; (3) type-of-symbol-at-location *value-declaration*
-;;
-;; For vars, we want (3)
-;;
-;; For classes (we want (2)):
-;;
-;; (1) any
-;; (2) Class
-;; (3) typeof Class
-;;
 ;; TODO: Represent types as Clojure data (hiccup)?
 ;; At least understand some basics:
 ;; - primitives (type flags)
@@ -61,9 +43,8 @@
 ;; - references to types defined here
 ;;   (class, interface, type alias, alias (?))
 (defn- debug-types [{:keys [type-checker] :as env} sym]
-  (-> {:type             (type-checker/type-of-symbol type-checker sym)
-       :declared-type    (type-checker/declared-type-of-symbol type-checker sym)
-       :type-at-location (type-at-decl env sym)}
+  (-> {:type          (type-checker/type-of-symbol type-checker sym)
+       :declared-type (type-checker/declared-type-of-symbol type-checker sym)}
       (update-vals (partial debug-type env))))
 
 (defn- extract-symbol-common [env sym kind]
@@ -98,8 +79,10 @@
   (extract-symbol-common env sym :property))
 
 (defn- extract-method [env sym]
-  (-> (extract-symbol-common env sym :method)
-      (assoc :signatures (extract-signatures env (type-at-decl env sym)))))
+  (let [checker (:type-checker env)
+        type    (type-checker/type-of-symbol checker sym)]
+    (-> (extract-symbol-common env sym :method)
+        (assoc :signatures (extract-signatures env type)))))
 
 (defn- extract-get-accessor [env sym]
   (extract-symbol-common env sym :get-accessor))
@@ -128,8 +111,10 @@
                         modifier-flags/export)))))
 
 (defn- extract-function [env sym]
-  (-> (extract-symbol-common env sym :function)
-      (assoc :signatures (extract-signatures env (type-at-decl env sym)))))
+  (let [checker (:type-checker env)
+        type    (type-checker/type-of-symbol checker sym)]
+    (-> (extract-symbol-common env sym :function)
+        (assoc :signatures (extract-signatures env type)))))
 
 (defn- extract-class-members
   [{:keys [type-checker] :as env} sym]
