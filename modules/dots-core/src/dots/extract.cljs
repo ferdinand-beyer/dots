@@ -40,16 +40,26 @@
 
 ;; Types of symbol
 ;;
-;; (1) get-type-of-symbol
-;; (2) get-declared-type-of-symbol
-;; (3) get-type-of-symbol-at-location *value-declaration*
+;; (1) type-of-symbol
+;; (2) declared-type-of-symbol
+;; (3) type-of-symbol-at-location *value-declaration*
 ;;
 ;; For vars, we want (3)
 ;;
-;; For classes:
+;; For classes (we want (2)):
+;;
 ;; (1) any
 ;; (2) Class
 ;; (3) typeof Class
+;;
+;; TODO: Represent types as Clojure data (hiccup)?
+;; At least understand some basics:
+;; - primitives (type flags)
+;; - nullable types - same as (X | undefined)?
+;; - union types (A | B) - "either or"
+;; - intersection types (A & B) - "all of"
+;; - references to types defined here
+;;   (class, interface, type alias, alias (?))
 (defn- debug-types [{:keys [type-checker] :as env} sym]
   (-> {:type             (type-checker/type-of-symbol type-checker sym)
        :declared-type    (type-checker/declared-type-of-symbol type-checker sym)
@@ -57,11 +67,15 @@
       (update-vals (partial debug-type env))))
 
 (defn- extract-symbol-common [env sym kind]
-  (cond-> {:kind kind
-           :name (symbol/name sym)
-           :fqn  (type-checker/fully-qualified-name (:type-checker env) sym)
-           :doc  (doc-string sym)}
-    *debug?* (assoc :debug/types (debug-types env sym))))
+  (let [checker (:type-checker env)
+        doc-str (doc-string sym)]
+    (cond-> {:kind kind
+             :name (symbol/name sym)
+             ;; TODO: Only for types, so that we can reference them?
+             ;; TODO: Register in the environment? Allow to resolve types
+             :fqn  (type-checker/fully-qualified-name checker sym)}
+      doc-str      (assoc :doc doc-str)
+      *debug?* (assoc :debug/types (debug-types env sym)))))
 
 (defn- extract-parameter [env sym]
   (extract-symbol-common env sym :parameter))
