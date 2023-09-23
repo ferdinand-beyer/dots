@@ -45,7 +45,7 @@
         source-file (program/get-source-file program proxy-file-name)]
     (->> (source-file/statements source-file)
          (map import-declaration/module-specifier)
-         (map #(type-checker/get-symbol-at-location checker %)))))
+         (map #(type-checker/symbol-at-location checker %)))))
 
 (defn of-modules [module-names]
   (let [program      (create-program module-names)

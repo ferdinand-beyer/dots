@@ -2,8 +2,11 @@
   (:refer-clojure :exclude [type])
   (:require [dots.typescript :as ts]
             [dots.typescript.modifier-flags :as modifier-flags]
+            [dots.typescript.signature-kind :as signature-kind]
             [dots.typescript.symbol :as symbol]
             [dots.typescript.symbol-flags :as symbol-flags]
+            [dots.typescript.type :as type]
+            [dots.typescript.signature :as signature]
             [dots.typescript.type-checker :as type-checker]))
 
 (def ^:dynamic *debug?* true)
@@ -26,8 +29,14 @@
   (bit-and mask (symbol/flags sym)))
 
 (defn- type-at-decl [env sym]
-  (type-checker/get-type-of-symbol-at-location
+  (type-checker/type-of-symbol-at-location
    (:type-checker env) sym (symbol/value-declaration sym)))
+
+(defn- debug-type [{:keys [type-checker]} type]
+  (let [fqn (some->> (type/symbol type)
+                     (type-checker/fully-qualified-name type-checker))]
+    (cond-> {:str (type-checker/type-to-string type-checker type)}
+      (some? fqn) (assoc :fqn fqn))))
 
 ;; Types of symbol
 ;;
@@ -42,28 +51,47 @@
 ;; (2) Class
 ;; (3) typeof Class
 (defn- debug-types [{:keys [type-checker] :as env} sym]
-  (-> {:type (type-checker/get-type-of-symbol type-checker sym)
-       :declared-type (type-checker/get-declared-type-of-symbol type-checker sym)
+  (-> {:type             (type-checker/type-of-symbol type-checker sym)
+       :declared-type    (type-checker/declared-type-of-symbol type-checker sym)
        :type-at-location (type-at-decl env sym)}
-      (update-vals #(type-checker/type-to-string type-checker %))))
+      (update-vals (partial debug-type env))))
 
-(defn- extract-common [env sym kind]
-  (cond-> {:kind  kind
-           :name  (symbol/name sym)
-           :doc   (doc-string sym)}
+(defn- extract-symbol-common [env sym kind]
+  (cond-> {:kind kind
+           :name (symbol/name sym)
+           :fqn  (type-checker/fully-qualified-name (:type-checker env) sym)
+           :doc  (doc-string sym)}
     *debug?* (assoc :debug/types (debug-types env sym))))
 
+(defn- extract-parameter [env sym]
+  (extract-symbol-common env sym :parameter))
+
+(defn- extract-signature [env sig]
+  (let [checker     (:type-checker env)
+        return-type (type-checker/return-type-of-signature checker sig)]
+    (cond-> {:params (map #(extract-parameter env %) (signature/parameters sig))}
+      *debug?* (assoc :debug/return-type (debug-type env return-type)))))
+
+(defn- extract-signatures
+  ([env type]
+   (extract-signatures env type signature-kind/call))
+  ([env type kind]
+   (let [checker (:type-checker env)]
+     (for [sig (type-checker/signatures-of-type checker type kind)]
+       (extract-signature env sig)))))
+
 (defn- extract-property [env sym]
-  (extract-common env sym :property))
+  (extract-symbol-common env sym :property))
 
 (defn- extract-method [env sym]
-  (extract-common env sym :method))
+  (-> (extract-symbol-common env sym :method)
+      (assoc :signatures (extract-signatures env (type-at-decl env sym)))))
 
 (defn- extract-get-accessor [env sym]
-  (extract-common env sym :get-accessor))
+  (extract-symbol-common env sym :get-accessor))
 
 (defn- extract-set-accessor [env sym]
-  (extract-common env sym :set-accessor))
+  (extract-symbol-common env sym :set-accessor))
 
 (defn- extract-class-member [env sym]
   (condp = (mask-flags sym symbol-flags/class-member)
@@ -73,7 +101,7 @@
     symbol-flags/set-accessor (extract-set-accessor env sym)))
 
 (defn- extract-variable [env sym]
-  (-> (extract-common env sym :variable)
+  (-> (extract-symbol-common env sym :variable)
       (assoc
        ;; The "const" keyword seems to be eaten by TypeScript.
        ;; Assume "export let" is not allowed and "export" is
@@ -86,30 +114,36 @@
                         modifier-flags/export)))))
 
 (defn- extract-function [env sym]
-  (extract-common env sym :function))
+  (-> (extract-symbol-common env sym :function)
+      (assoc :signatures (extract-signatures env (type-at-decl env sym)))))
 
 (defn- extract-class-members
   [{:keys [type-checker] :as env} sym]
-  (let [type  (type-checker/get-declared-type-of-symbol type-checker sym)
-        props (type-checker/get-properties-of-type type-checker type)]
+  (let [type  (type-checker/declared-type-of-symbol type-checker sym)
+        props (type-checker/properties-of-type type-checker type)]
     (symbol-table env props extract-class-member)))
 
 (defn- extract-class [env sym]
-  (-> (extract-common env sym :class)
+  (-> (extract-symbol-common env sym :class)
       (assoc :members (extract-class-members env sym))))
 
 (defn- extract-interface [env sym]
-  (-> (extract-common env sym :interface)
-      (assoc :members (extract-class-members env sym))))
+  (let [checker (:type-checker env)
+        type (type-checker/declared-type-of-symbol checker sym)
+        sigs (extract-signatures env type)]
+    (-> (extract-symbol-common env sym :interface)
+        (assoc :members (extract-class-members env sym))
+        (cond->
+         (seq sigs) (assoc :signatures sigs)))))
 
 (defn- extract-enum [env sym]
-  (extract-common env sym :enum))
+  (extract-symbol-common env sym :enum))
 
 (defn- extract-type-alias [env sym]
-  (extract-common env sym :type-alias))
+  (extract-symbol-common env sym :type-alias))
 
 (defn- extract-alias [env sym]
-  (extract-common env sym :alias))
+  (extract-symbol-common env sym :alias))
 
 (declare extract-module)
 
@@ -128,8 +162,8 @@
     symbol-flags/alias                    (extract-alias env sym)))
 
 (defn- module-exports [{:keys [type-checker]} sym]
-  (type-checker/get-exports-of-module type-checker sym))
+  (type-checker/exports-of-module type-checker sym))
 
 (defn extract-module [env sym]
-  (-> (extract-common env sym :module)
+  (-> (extract-symbol-common env sym :module)
       (assoc :exports (symbol-table env (module-exports env sym) extract-module-member))))

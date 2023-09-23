@@ -53,6 +53,15 @@
 (defn base-types ^"BaseType[] | undefined" [^Type type]
   (.getBaseTypes type))
 
+(defn non-nullable-type ^Type [^Type type]
+  (.getNonNullableType type))
+
+(defn constraint ^"Type | undefined" [^Type type]
+  (.getConstraint type))
+
+(defn default ^"Type | undefined" [^Type type]
+  (.getDefault type))
+
 ;; UnionType
 (defn union? [^Type type]
   (.isUnion type))

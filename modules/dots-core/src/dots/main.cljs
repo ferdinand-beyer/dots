@@ -15,5 +15,7 @@
 (comment
   (def vscode (experiment))
   (run! prn (sort (keys (:exports vscode))))
-  (get-in vscode [:exports "Uri"])
+  (get-in vscode [:exports "Event"])
+  (get-in vscode [:exports "authentication"
+                  :exports "getSession"])
   )
