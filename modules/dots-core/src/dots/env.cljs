@@ -14,6 +14,8 @@
 (defn- proxy-source-text [module-names]
   (->> module-names
        (mapcat (fn [module-name]
+                 ;; TODO: Support default exports
+                 ;; export * as <name> from?
                  (list "export * from \"" module-name "\";\n")))
        str/join))
 
@@ -32,11 +34,13 @@
       (.assign js/Object #js {} host #js {:fileExists    file-exists
                                           :getSourceFile get-source-file}))))
 
+(def default-compiler-opts #js {})
+
 (defn- create-program
   ([module-names]
    (create-program module-names nil))
   ([module-names compiler-opts]
-   (let [compiler-opts (or compiler-opts #js {})
+   (let [compiler-opts (or compiler-opts default-compiler-opts)
          host (proxy-compiler-host compiler-opts module-names)]
      (ts/create-program #js [proxy-file-name] compiler-opts host))))
 

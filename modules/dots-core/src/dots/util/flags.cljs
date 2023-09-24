@@ -249,7 +249,7 @@
 
   (def expanded
     (update-vals t #(into #{} (map (reverse-map t)) (bits %))))
-  (:ClassMember expanded)
+  (:EnumMember expanded)
 
   (seq (flags-seq t 106500))
   (seq (flag-set t :ExportHasLocal))

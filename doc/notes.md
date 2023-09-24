@@ -13,3 +13,10 @@
   - function for accessor + callable type
   - emit docstrings?
   - emit type hints?
+
+steps:
+
+1. create a TypeScript program
+2. extract information from TypeScript
+3. adapt: decide what code to emit
+4. emit ClojureScript code

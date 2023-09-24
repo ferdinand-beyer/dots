@@ -31,6 +31,7 @@
 (def non-primitive (.-NonPrimitive ts/TypeFlags))
 (def template-literal (.-TemplateLiteral ts/TypeFlags))
 (def string-mapping (.-StringMapping ts/TypeFlags))
+
 (def literal (.-Literal ts/TypeFlags))
 (def unit (.-Unit ts/TypeFlags))
 (def string-or-number-literal (.-StringOrNumberLiteral ts/TypeFlags))

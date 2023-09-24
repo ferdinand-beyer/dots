@@ -22,8 +22,8 @@
 (defn- symbol-table [env symbols extract-fn]
   (->> symbols
        (map #(extract-fn env %))
-       (map (juxt :name identity))
-       (into {})))
+       (mapcat (juxt :name identity))
+       (apply array-map)))
 
 (defn- mask-flags [sym mask]
   (bit-and mask (symbol/flags sym)))
@@ -135,8 +135,18 @@
         (cond->
          (seq sigs) (assoc :signatures sigs)))))
 
+(defn- extract-enum-member [env sym]
+  (extract-symbol-common env sym :enum-member))
+
+(defn- extract-enum-members [env sym]
+  (let [checker (:type-checker env)
+        type    (type-checker/type-of-symbol checker sym)
+        props   (type-checker/properties-of-type checker type)]
+    (symbol-table env props extract-enum-member)))
+
 (defn- extract-enum [env sym]
-  (extract-symbol-common env sym :enum))
+  (-> (extract-symbol-common env sym :enum)
+      (assoc :members (extract-enum-members env sym))))
 
 (defn- extract-type-alias [env sym]
   (extract-symbol-common env sym :type-alias))
@@ -146,6 +156,7 @@
 
 (declare extract-module)
 
+;; TODO: Use multimethod?
 (defn- extract-module-member [env sym]
   (condp = (mask-flags sym symbol-flags/module-member)
     symbol-flags/function-scoped-variable (extract-variable env sym)

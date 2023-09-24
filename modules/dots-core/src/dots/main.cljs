@@ -1,10 +1,11 @@
 (ns dots.main
-  (:require [dots.env :as env]
+  (:require [dots.adapt :as adapt]
+            [dots.env :as env]
             [dots.extract :as extract]))
 
-(defn- experiment []
-  (let [env (env/of-modules ["vscode"])]
-    (extract/extract-module env (get-in env [:module-symbols "vscode"]))))
+(defn- extract-module [module-name]
+  (let [env (env/of-modules [module-name])]
+    (extract/extract-module env (get-in env [:module-symbols module-name]))))
 
 (defn ^:export main []
   (println "Hello, Dots."))
@@ -13,9 +14,18 @@
   (enable-console-print!))
 
 (comment
-  (def vscode (experiment))
+  (def vscode (extract-module "vscode"))
+
   (run! prn (sort (keys (:exports vscode))))
   (get-in vscode [:exports "Event"])
   (get-in vscode [:exports "authentication"
                   :exports "getSession"])
+
+  (get-in vscode [:exports "TextEditorSelectionChangeKind"])
+
+  (def namespaces (adapt/adapt vscode))
+  (get namespaces 'vscode)
+  (get namespaces 'vscode.text-editor-selection-change-kind)
+
+  ;;
   )

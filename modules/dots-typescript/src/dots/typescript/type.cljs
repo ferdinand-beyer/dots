@@ -1,5 +1,5 @@
 (ns dots.typescript.type
-  (:refer-clojure :exclude [symbol]))
+  (:refer-clojure :exclude [symbol type]))
 
 ;;export interface Type {
 ;;    flags: TypeFlags;
@@ -101,3 +101,111 @@
 ;; IndexType
 (defn index-type? [^Type type]
   (.isIndexType type))
+
+;;
+;; UnionOrIntersectionType
+;; UnionType extends UnionOrIntersectionType
+;; IntersectionType extends UnionOrIntersectionType
+;;
+
+(defn types
+  ^"Type[]" [^UnionOrIntersectionType type]
+  (.-types type))
+
+;;
+;; FreshableType
+;;
+
+;;interface FreshableType extends Type {
+;;    freshType: FreshableType;
+;;    regularType: FreshableType;
+;;}
+
+;;
+;; LiteralType
+;; StringLiteralType extends LiteralType
+;; NumberLiteralType extends LiteralType
+;; BigIntLiteralType extends LiteralType
+;;
+
+;;interface LiteralType extends FreshableType {
+;;    value: string | number | PseudoBigInt;
+;;}
+
+(defn value
+  ^"string | number | PseudoBigInt" [^LiteralType type]
+  (.-value type))
+
+;;
+;; TypeParameter
+;;
+
+;interface InstantiableType extends Type {}
+;interface TypeParameter extends InstantiableType {}
+
+;;
+;; ObjectType
+;;
+
+;;interface ObjectType extends Type {
+;;    objectFlags: ObjectFlags;
+;;}
+
+(defn object-flags [^ObjectType type]
+  (.-objectFlags type))
+
+;;
+;; InterfaceType
+;; Class and interface types (ObjectFlags.Class and ObjectFlags.Interface).
+;;
+
+;;interface InterfaceType extends ObjectType {
+;;    typeParameters: TypeParameter[] | undefined;
+;;    outerTypeParameters: TypeParameter[] | undefined;
+;;    localTypeParameters: TypeParameter[] | undefined;
+;;    thisType: TypeParameter | undefined;
+;;}
+
+(defn type-parameters
+  ^"TypeParameter[] | undefined" [^InterfaceType type]
+  (.-typeParameters type))
+
+(defn outer-type-parameters
+  ^"TypeParameter[] | undefined" [^InterfaceType type]
+  (.-outerTypeParameters type))
+
+(defn local-type-parameters
+  ^"TypeParameter[] | undefined" [^InterfaceType type]
+  (.-localTypeParameters type))
+
+(defn this-type
+  ^"TypeParameter | undefined" [^InterfaceType type]
+  (.-thisType type))
+
+;;interface IndexType extends InstantiableType {
+;;    type: InstantiableType | UnionOrIntersectionType;
+;;}
+
+(defn type
+  ^"InstantiableType | UnionOrIntersectionType" [^IndexType type]
+  (.-type type))
+
+;;interface ConditionalRoot {
+;;    node: ConditionalTypeNode;
+;;    checkType: Type;
+;;    extendsType: Type;
+;;    isDistributive: boolean;
+;;    inferTypeParameters?: TypeParameter[];
+;;    outerTypeParameters?: TypeParameter[];
+;;    instantiations?: Map<string, Type>;
+;;    aliasSymbol?: Symbol;
+;;    aliasTypeArguments?: Type[];
+;;}
+
+;;interface ConditionalType extends InstantiableType {
+;;    root: ConditionalRoot;
+;;    checkType: Type;
+;;    extendsType: Type;
+;;    resolvedTrueType?: Type;
+;;    resolvedFalseType?: Type;
+;;}
