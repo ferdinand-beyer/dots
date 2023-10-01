@@ -1,0 +1,1 @@
+{:lint-as {dots.util.io/with-open clojure.core/with-open}}

@@ -48,6 +48,12 @@
   ;; Return the rest: the path within the module.
   (next (:symbol-path ctx)))
 
+;; variable:     ns/obj
+;; property:     (.. ns/obj -a -b -c)
+;; function:     (ns/func x y z)
+;; method:       (.. ns/obj -a -b (method x y z))
+;; arg-property: (.-prop arg)
+;; arg-method:   (.method arg x y z)
 (defn- get-form
   "Returns a form to access a property in the current context."
   [ctx property-name]

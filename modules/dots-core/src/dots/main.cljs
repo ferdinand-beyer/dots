@@ -1,5 +1,6 @@
 (ns dots.main
   (:require [dots.adapt :as adapt]
+            [dots.emit :as emit]
             [dots.env :as env]
             [dots.extract :as extract]))
 
@@ -26,6 +27,8 @@
   (def namespaces (adapt/adapt vscode))
   (get namespaces 'vscode)
   (get namespaces 'vscode.text-editor-selection-change-kind)
+
+  (emit/emit-project nil nil)
 
   ;;
   )
