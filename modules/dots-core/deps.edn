@@ -2,4 +2,5 @@
  :deps {applied-science/js-interop {:mvn/version "0.3.3"}
         camel-snake-kebab/camel-snake-kebab {:mvn/version "0.4.3"}
         dots/node {:local/root "../dots-node"}
-        dots/typescript {:local/root "../dots-typescript"}}}
+        dots/typescript {:local/root "../dots-typescript"}
+        org.clojure/tools.cli {:mvn/version "1.0.219"}}}

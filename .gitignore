@@ -8,5 +8,6 @@
 node_modules/
 
 dist/
+target/
 
 *.pdf

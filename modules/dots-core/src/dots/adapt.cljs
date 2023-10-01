@@ -1,49 +1,37 @@
 (ns dots.adapt
-  (:require [camel-snake-kebab.core :as csk]
-            [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [dots.util.names :as names]))
 
 (def empty-ctx
   {:namespaces {}
    :ns-path []
    :symbol-path []})
 
-;; TODO: Strip `get-`, `set-`, and `is-` prefixes for functions?
-;; TODO: Add `?` suffix to booleans?
-;; TODO: Prefix optionals with `?`?
-(defn- cljs-name [symbol-name]
-  (-> symbol-name
-      (str/replace "\"" "")
-      (str/replace #"\W+" "_")
-      csk/->kebab-case-string))
-
 (defn- update-ns-path [ctx f]
   (let [ns-path (f (:ns-path ctx))
-        ns-key  (str/join "." (map name ns-path))]
-    (-> ctx
-        (assoc-in [:namespaces ns-key] {:ns-path ns-path})
-        (assoc :ns-path ns-path :ns-key ns-key))))
+        ns-key  (when (seq ns-path)
+                  (str/join "." (map name ns-path)))]
+    (assoc ctx :ns-path ns-path :ns-key ns-key)))
 
 (defn- update-ns [ctx f & args]
   (apply update-in ctx [:namespaces (:ns-key ctx)] f args))
+
+(defn- assoc-ns-path [ctx]
+  (update-ns ctx assoc :ns-path (:ns-path ctx)))
 
 (defn- enter-namespace [ctx symbol-name ns-data]
   (-> ctx
       ;; TODO We might want to separate "symbol path" and "namespace path"?
       ;; E.g. if we don't want to mirror the hierarchy?
       (update :symbol-path conj symbol-name)
-      (update-ns-path #(conj % (cljs-name symbol-name)))
+      (update-ns-path #(conj % (names/cljs-name symbol-name)))
+      (assoc-ns-path)
       (update-ns merge ns-data)))
 
 (defn- leave-namespace [ctx]
   (-> ctx
       (update :symbol-path pop)
       (update-ns-path pop)))
-
-;; TODO: Generate in a second pass, when all vars are determined?
-;; Together with "excludes"
-(defn- add-require [ctx]
-  (let [{:keys [module-name ns-alias]} ctx]
-    (update-ns ctx assoc-in [:requires module-name] ns-alias)))
 
 (defn- add-var [ctx var-name data]
   ;; TODO: Keep order (add index key)
@@ -85,34 +73,6 @@
                              :op op})))]
     (update-ns ctx update-in [:vars var-name :arities arity] add)))
 
-(defn- object-path [ctx]
-  ;; The first symbol is the module that we ns-alias.
-  ;; Return the rest: the path within the module.
-  (next (:symbol-path ctx)))
-
-;; variable:     ns/obj
-;; property:     (.. ns/obj -a -b -c)
-;; function:     (ns/func x y z)
-;; method:       (.. ns/obj -a -b (method x y z))
-;; arg-property: (.-prop arg)
-;; arg-method:   (.method arg x y z)
-(defn- get-form
-  "Returns a form to access a property in the current context."
-  [ctx property-name]
-  (let [ns-alias (:ns-alias ctx)
-        path     (object-path ctx)]
-    ;; TODO Probably easier to recur and produce: (.-c (.-b ns/a))
-    ;; instead of: (.. ns/a -b -c)
-    ;; Need the same for call syntax: (.c (.-b ns/a) x y z)
-    ;; Or de-sugar to (. obj -member) and (. obj f x y z)?
-    ;; Or return a description and delegate code generation to the emitter?
-    (if (seq path)
-      (list* '..
-             (symbol (str ns-alias "/" (first path)))
-             (map #(symbol (str "-" %))
-                  (concat (next path) (list property-name))))
-      (symbol (str ns-alias "/" property-name)))))
-
 (defmulti adapt*
   (fn [_ctx node]
     (:kind node)))
@@ -131,7 +91,7 @@
 
 (defmethod adapt* :variable
   [ctx {:keys [name] :as node}]
-  (let [var-name        (cljs-name name)
+  (let [var-name        (names/cljs-name name)
         [module & path] (:symbol-path ctx)]
     ;; TODO: If the type is callable, add arities to call?
     (-> ctx
@@ -143,7 +103,7 @@
 
 (defmethod adapt* :function
   [ctx {:keys [name signatures] :as node}]
-  (let [var-name (cljs-name name)
+  (let [var-name (names/cljs-name name)
         [module & path] (:symbol-path ctx)
         path     (conj (vec path) name)
         ctx      (add-var ctx var-name (select-keys node [:doc]))]
@@ -152,7 +112,7 @@
               ;; TODO: Check for variadic params
               ;; TODO: Consider param types and docstrings
               ;; TODO: Consider return value?
-              (let [args (mapv (comp cljs-name :name) params)]
+              (let [args (mapv (comp names/cljs-name :name) params)]
                 (add-arity ctx var-name (count args)
                            {:op          :module-call
                             :module-name module
@@ -186,7 +146,7 @@
 
 (defmethod adapt* :enum-member
   [ctx {:keys [name] :as node}]
-  (let [var-name        (cljs-name name)
+  (let [var-name        (names/cljs-name name)
         [module & path] (:symbol-path ctx)]
     (-> ctx
         (add-var var-name (select-keys node [:doc]))
@@ -201,8 +161,8 @@
 (defmethod adapt* :property
   [ctx {:keys [name] :as node}]
   ;; TODO: If the type is callable, add a function?
-  (let [var-name  (cljs-name name)
-        type-name (cljs-name (last (:symbol-path ctx)))]
+  (let [var-name  (names/cljs-name name)
+        type-name (names/cljs-name (last (:symbol-path ctx)))]
     (-> ctx
         (add-var var-name (select-keys node [:doc]))
         (add-arity var-name 1 {:op   :arg-get
@@ -214,8 +174,8 @@
 
 (defmethod adapt* :method
   [ctx {:keys [name signatures] :as node}]
-  (let [var-name  (cljs-name name)
-        type-name (cljs-name (last (:symbol-path ctx)))
+  (let [var-name  (names/cljs-name name)
+        type-name (names/cljs-name (last (:symbol-path ctx)))
         path      [name]
         ctx       (add-var ctx var-name (select-keys node [:doc]))]
     (reduce (fn [ctx {:keys [params]}]
@@ -223,7 +183,7 @@
                 ;; TODO: Check for variadic params
                 ;; TODO: Consider param types and docstrings
                 ;; TODO: Consider return value?
-              (let [args (into [type-name] (map (comp cljs-name :name)) params)]
+              (let [args (into [type-name] (map (comp names/cljs-name :name)) params)]
                 (add-arity ctx var-name (count args)
                            {:op   :arg-call
                             :path path
@@ -231,14 +191,16 @@
             ctx
             signatures)))
 
-(defn adapt [module]
+;; TODO: After adapting the whole module:
+;; - require referenced modules
+;; - exclude cljs.core names that we use
+
+(defn adapt [module _opts]
+  ;; TODO: Support ns-prefix, e.g. "dots"
   (-> empty-ctx
-      (assoc :module-name (:name module)
-             :ns-alias (cljs-name (:name module)))
+      (assoc :module-name (:name module))
       (adapt* module)
       :namespaces))
 
 (comment
-  (adapt* empty-ctx {:kind :module})
-
-  )
+  (adapt* empty-ctx {:kind :module}))
