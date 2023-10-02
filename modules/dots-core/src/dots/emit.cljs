@@ -1,4 +1,5 @@
 (ns dots.emit
+  "Emit ClojureScript adapter code."
   (:require [clojure.string :as str]
             [dots.node.fs :as fs]
             [dots.node.path :as path]
@@ -31,7 +32,6 @@
 
 (defn- emit-get [coll path]
   (case (count path)
-    0 (conj coll "nil")
     1 (conj coll (first path))
     2 (conj coll "(.-" (second path) " " (first path) ")")
     (-> coll
@@ -52,7 +52,6 @@
 
 (defn- emit-call [coll path args]
   (case (count path)
-    0 (conj coll "nil")
     1 (-> coll
           (conj "(" (first path))
           (emit-args args)
@@ -75,7 +74,7 @@
       (emit-args args)
       (conj ")")))
 
-(defn- module-path [module-name path ns-data]
+(defn- module-path [{:keys [module-name path]} ns-data]
   (let [alias (get-in ns-data [:requires module-name] "ALIAS-MISSING")]
     (cons (str alias "/" (first path)) (next path))))
 
@@ -85,20 +84,20 @@
     (:op expr)))
 
 (defmethod emit-expr :global-get
-  [coll {:keys [module-name path]} _ ns-data]
-  (emit-get coll (module-path module-name path ns-data)))
+  [coll expr _ ns-data]
+  (emit-get coll (module-path expr ns-data)))
 
 (defmethod emit-expr :global-set
-  [coll {:keys [module-name path]} args ns-data]
-  (emit-set coll (module-path module-name path ns-data) (first args)))
+  [coll expr args ns-data]
+  (emit-set coll (module-path expr ns-data) (first args)))
 
 (defmethod emit-expr :global-call
-  [coll {:keys [module-name path]} args ns-data]
-  (emit-call coll (module-path module-name path ns-data) args))
+  [coll expr args ns-data]
+  (emit-call coll (module-path expr ns-data) args))
 
 (defmethod emit-expr :global-construct
-  [coll {:keys [module-name path]} args ns-data]
-  (emit-construct coll (module-path module-name path ns-data) args))
+  [coll expr args ns-data]
+  (emit-construct coll (module-path expr ns-data) args))
 
 (defmethod emit-expr :arg-get
   [coll {:keys [path]} args _]
@@ -170,10 +169,13 @@
   (-> coll
       (conj "(")
       (emit-core-symbol "def" ns-data)
-      (conj " " var-name "\n")
-      (cond-> doc (-> (emit-doc-string doc)
-                      (conj "\n")))
-      (conj "  ")
+      (conj " " var-name)
+      (as-> % (if doc
+                (-> %
+                    (conj "\n")
+                    (emit-doc-string doc)
+                    (conj "\n  "))
+                (conj % " ")))
       (emit-expr init nil ns-data)
       (conj ")\n")))
 

@@ -1,4 +1,6 @@
 (ns dots.adapt
+  "Determine which ClojureScript adapter namespaces and vars to generate
+   from TypeScript module information."
   (:require [clojure.string :as str]
             [dots.util.names :as names]))
 

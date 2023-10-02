@@ -1,4 +1,5 @@
 (ns dots.extract
+  "Extract module exports using the TypeScript compiler."
   (:refer-clojure :exclude [type])
   (:require [clojure.string :as str]
             [dots.typescript :as ts]
