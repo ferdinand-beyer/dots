@@ -1,15 +1,66 @@
 (ns dots.extract
   (:refer-clojure :exclude [type])
-  (:require [dots.typescript :as ts]
+  (:require [clojure.string :as str]
+            [dots.typescript :as ts]
+            [dots.typescript.import-declaration :as import-declaration]
             [dots.typescript.modifier-flags :as modifier-flags]
+            [dots.typescript.program :as program]
+            [dots.typescript.signature :as signature]
             [dots.typescript.signature-kind :as signature-kind]
+            [dots.typescript.source-file :as source-file]
             [dots.typescript.symbol :as symbol]
             [dots.typescript.symbol-flags :as symbol-flags]
             [dots.typescript.type :as type]
-            [dots.typescript.signature :as signature]
             [dots.typescript.type-checker :as type-checker]))
 
-(def ^:dynamic *debug?* true)
+(def ^:dynamic *debug?* false)
+
+(def default-compiler-opts #js {})
+
+(def ^:private proxy-file-name "dots$proxy.d.ts")
+
+(defn- proxy-file-name? [file-name]
+  (= file-name proxy-file-name))
+
+(defn- proxy-source-text [module-names]
+  (->> module-names
+       (mapcat (fn [module-name]
+                 ;; TODO: Support default exports
+                 ;; export * as <name> from?
+                 (list "export * from \"" module-name "\";\n")))
+       str/join))
+
+;; TODO: Instead of the proxy, can we just resolve modules and find them in the
+;; type checker's ambient modules?
+(defn- proxy-compiler-host
+  "Creates a CompilerHost that resolves our special proxy file."
+  [compiler-opts module-names]
+  (let [host        (ts/create-compiler-host compiler-opts true)
+        source-text (proxy-source-text module-names)]
+    (letfn [(file-exists [file-name]
+              (or (proxy-file-name? file-name)
+                  (.fileExists host file-name)))
+            (get-source-file [file-name target-or-opts on-error create?]
+              (if (proxy-file-name? file-name)
+                (ts/create-source-file proxy-file-name source-text target-or-opts true)
+                (.getSourceFile host file-name target-or-opts on-error create?)))]
+      (.assign js/Object #js {} host #js {:fileExists    file-exists
+                                          :getSourceFile get-source-file}))))
+
+(defn- create-program
+  ([module-names]
+   (create-program module-names nil))
+  ([module-names compiler-opts]
+   (let [compiler-opts (or compiler-opts default-compiler-opts)
+         host (proxy-compiler-host compiler-opts module-names)]
+     (ts/create-program #js [proxy-file-name] compiler-opts host))))
+
+(defn- module-symbols [program]
+  (let [checker     (program/get-type-checker program)
+        source-file (program/get-source-file program proxy-file-name)]
+    (->> (source-file/statements source-file)
+         (map import-declaration/module-specifier)
+         (map #(type-checker/symbol-at-location checker %)))))
 
 (defn- doc-string [sym]
   (let [parts (symbol/documentation-comment sym)]
@@ -174,6 +225,12 @@
 (defn- module-exports [{:keys [type-checker]} sym]
   (type-checker/exports-of-module type-checker sym))
 
-(defn extract-module [env sym]
+(defn- extract-module [env sym]
   (-> (extract-symbol-common env sym :module)
       (assoc :exports (symbol-table env (module-exports env sym) extract-module-member))))
+
+(defn extract [module-name]
+  (let [program (create-program [module-name])
+        env     {:type-checker (program/get-type-checker program)}
+        symbol  (first (module-symbols program))]
+    (extract-module env symbol)))

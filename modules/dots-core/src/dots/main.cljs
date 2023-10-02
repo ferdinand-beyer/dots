@@ -2,12 +2,7 @@
   (:require [clojure.tools.cli :refer [parse-opts]]
             [dots.adapt :as adapt]
             [dots.emit :as emit]
-            [dots.env :as env]
             [dots.extract :as extract]))
-
-(defn- extract-module [module-name]
-  (let [env (env/of-modules [module-name])]
-    (extract/extract-module env (get-in env [:module-symbols module-name]))))
 
 (def cli-opts
   (cond-> [["-h" "--help" "Show help"]
@@ -32,7 +27,7 @@
 (defn- run [module-name {:keys [exit?]
                          :or {exit? true}
                          :as opts}]
-  (let [module     (extract-module module-name)
+  (let [module     (extract/extract module-name)
         namespaces (adapt/adapt module opts)]
     (emit/emit-project namespaces opts))
   (when exit?
@@ -53,9 +48,9 @@
   (enable-console-print!))
 
 (comment
-  (run "vscode" {:output-dir "dist/dots-vscode" :exit? false})
+  (run "vscode" {:output-dir "target/dots-vscode", :exit? false})
 
-  (def vscode (extract-module "vscode"))
+  (def vscode (extract/extract "vscode"))
 
   (run! prn (sort (keys (:exports vscode))))
   (get-in vscode [:exports "Event"])
