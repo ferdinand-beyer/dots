@@ -34,9 +34,13 @@
       (update-ns-path pop)))
 
 (defn- add-var [ctx var-name data]
-  ;; TODO: Keep order (add index key)
   ;; TODO: Handle name conflicts (rename?)
-  (update-ns ctx update-in [:vars var-name] merge data {:var-name var-name}))
+  (update-ns ctx update :vars
+             (fn [vars]
+               (update vars var-name merge
+                       data
+                       {:var-name var-name
+                        :order    (count vars)}))))
 
 (defn- add-arity [ctx var-name arity op]
   (letfn [(add [arity-map]
@@ -101,25 +105,42 @@
                                :module-name module
                                :path        (conj (vec path) name)}))))
 
+(defn- signature-arglists [{:keys [params]}]
+  (let [[req opt] (split-with (complement :optional?) params)
+        args (into [] (map (comp names/cljs-name :name)) req)]
+    (loop [arglists [args]
+           args args
+           opt opt]
+      (if-let [arg (first opt)]
+        (let [args (conj args (names/cljs-name (:name arg)))]
+          (recur (conj arglists args) args (next opt)))
+        arglists))))
+
+(defn- add-signatures [ctx var-name signatures arity-fn]
+  (reduce (fn [ctx signature]
+            ;; TODO: Check for variadic params
+            ;; TODO: Consider param types and docstrings
+            ;; TODO: Consider return value?
+            (reduce (fn [ctx args]
+                      (let [{:keys [args] :as arity} (arity-fn args)]
+                        (add-arity ctx var-name (count args) arity)))
+                    ctx
+                    (signature-arglists signature)))
+          ctx
+          signatures))
+
 (defmethod adapt* :function
   [ctx {:keys [name signatures] :as node}]
   (let [var-name (names/cljs-name name)
         [module & path] (:symbol-path ctx)
         path     (conj (vec path) name)
         ctx      (add-var ctx var-name (select-keys node [:doc]))]
-    (reduce (fn [ctx {:keys [params]}]
-              ;; TODO: Check for optional params
-              ;; TODO: Check for variadic params
-              ;; TODO: Consider param types and docstrings
-              ;; TODO: Consider return value?
-              (let [args (mapv (comp names/cljs-name :name) params)]
-                (add-arity ctx var-name (count args)
-                           {:op          :module-call
-                            :module-name module
-                            :path        path
-                            :args        args})))
-            ctx
-            signatures)))
+    (add-signatures ctx var-name signatures
+                    (fn [args]
+                      {:op          :module-call
+                       :module-name module
+                       :path        path
+                       :args        args}))))
 
 (defn- adapt-interface [ctx {:keys [name members] :as node}]
   (as-> ctx %
@@ -178,18 +199,11 @@
         type-name (names/cljs-name (last (:symbol-path ctx)))
         path      [name]
         ctx       (add-var ctx var-name (select-keys node [:doc]))]
-    (reduce (fn [ctx {:keys [params]}]
-                ;; TODO: Check for optional params
-                ;; TODO: Check for variadic params
-                ;; TODO: Consider param types and docstrings
-                ;; TODO: Consider return value?
-              (let [args (into [type-name] (map (comp names/cljs-name :name)) params)]
-                (add-arity ctx var-name (count args)
-                           {:op   :arg-call
-                            :path path
-                            :args args})))
-            ctx
-            signatures)))
+    (add-signatures ctx var-name signatures
+                    (fn [args]
+                      {:op   :arg-call
+                       :path path
+                       :args (into [type-name] args)}))))
 
 ;; TODO: After adapting the whole module:
 ;; - require referenced modules

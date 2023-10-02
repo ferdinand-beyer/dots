@@ -56,6 +56,7 @@
 
   (run! prn (sort (keys (:exports vscode))))
   (get-in vscode [:exports "Event"])
+  (get-in vscode [:exports "TextDocument"])
   (get-in vscode [:exports "authentication" :exports])
   (get-in vscode [:exports "authentication"
                   :exports "getSession"])

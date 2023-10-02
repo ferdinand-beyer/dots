@@ -27,11 +27,11 @@
              (str/replace "\\" "\\\\")
              (str/replace "\"" "\\\"")
              (str/replace "\n" (str "\n" indent " ")))
-         "\"\n")))
+         "\"")))
 
 (defn- emit-get [coll path]
   (case (count path)
-    0 nil
+    0 (conj coll "nil")
     1 (conj coll (first path))
     2 (conj coll "(.-" (second path) " " (first path) ")")
     (-> coll
@@ -119,7 +119,8 @@
   ;; - (clj-excluded? x) -> need fqn cljs.core/x
   (-> coll
       (conj "\n" "(defn " var-name "\n")
-      (cond-> doc (emit-doc-string doc))
+      (cond-> doc (-> (emit-doc-string doc)
+                      (conj "\n")))
       (conj "  {:arglists '(")
       (into (comp (mapcat :arglists)
                   (mapcat #(list "[" (str/join " " %) "] ")))
