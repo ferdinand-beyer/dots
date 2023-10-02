@@ -230,3 +230,7 @@
 (defn exports-of-module
   ^"Symbol[]" [^TypeChecker type-checker ^Symbol module-symbol]
   (.getExportsOfModule type-checker module-symbol))
+
+(defn optional-parameter?
+  [^TypeChecker type-checker ^ParameterDeclaration node]
+  (.isOptionalParameter type-checker node))

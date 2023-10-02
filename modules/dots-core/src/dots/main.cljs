@@ -50,11 +50,12 @@
 (comment
   (run "vscode" {:output-dir "target/dots-vscode", :exit? false})
 
+  (set! extract/*debug?* true)
+
   (def vscode (extract/extract "vscode"))
 
   (run! prn (sort (keys (:exports vscode))))
   (get-in vscode [:exports "Event"])
-  (get-in vscode [:exports "TextDocument"])
   (get-in vscode [:exports "authentication" :exports])
   (get-in vscode [:exports "authentication"
                   :exports "getSession"])

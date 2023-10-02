@@ -82,8 +82,11 @@
 (defn- debug-type [{:keys [type-checker]} type]
   (let [fqn (some->> (type/symbol type)
                      (type-checker/fully-qualified-name type-checker))]
-    (cond-> {:str (type-checker/type-to-string type-checker type)}
-      (some? fqn) (assoc :fqn fqn))))
+    (cond-> {:str   (type-checker/type-to-string type-checker type)
+             :flags (type/flags type)}
+      (some? fqn) (assoc :fqn fqn)
+      (type/literal? type) (assoc :value (type/value type))
+      (type/class-or-interface? type) (assoc :object-flags (type/object-flags type)))))
 
 ;; TODO: Represent types as Clojure data (hiccup)?
 ;; At least understand some basics:
@@ -96,7 +99,7 @@
 (defn- debug-types [{:keys [type-checker] :as env} sym]
   (-> {:type          (type-checker/type-of-symbol type-checker sym)
        :declared-type (type-checker/declared-type-of-symbol type-checker sym)}
-      (update-vals (partial debug-type env))))
+      (update-vals #(debug-type env %))))
 
 (defn- extract-symbol-common [env sym kind]
   (let [checker (:type-checker env)
@@ -106,11 +109,15 @@
              ;; TODO: Only for types, so that we can reference them?
              ;; TODO: Register in the environment? Allow to resolve types
              :fqn  (type-checker/fully-qualified-name checker sym)}
-      doc-str      (assoc :doc doc-str)
-      *debug?* (assoc :debug/types (debug-types env sym)))))
+      doc-str  (assoc :doc doc-str)
+      *debug?* (assoc :debug/types (debug-types env sym)
+                      :debug/flags (symbol/flags sym)))))
 
 (defn- extract-parameter [env sym]
-  (extract-symbol-common env sym :parameter))
+  (let [checker (:type-checker env)
+        decl    (symbol/value-declaration sym)]
+    (-> (extract-symbol-common env sym :parameter)
+        (assoc :optional? (type-checker/optional-parameter? checker decl)))))
 
 (defn- extract-signature [env sig]
   (let [checker     (:type-checker env)
