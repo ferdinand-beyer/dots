@@ -105,7 +105,7 @@
   (let [checker (:type-checker env)
         doc-str (doc-string sym)]
     (cond-> {:kind kind
-             :name (symbol/name sym)
+             :name (symbol/name sym) ;; TODO: Use `type-checker/symbol-to-string`?
              ;; TODO: Only for types, so that we can reference them?
              ;; TODO: Register in the environment? Allow to resolve types
              :fqn  (type-checker/fully-qualified-name checker sym)}

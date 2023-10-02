@@ -3,9 +3,9 @@
             [dots.util.names :as names]))
 
 (def empty-ctx
-  {:namespaces {}
-   :ns-path []
-   :symbol-path []})
+  {:namespaces  {}
+   :symbol-path []
+   :ns-path     []})
 
 (defn- update-ns-path [ctx f]
   (let [ns-path (f (:ns-path ctx))
@@ -31,6 +31,8 @@
 (defn- leave-namespace [ctx]
   (-> ctx
       (update :symbol-path pop)
+      ;; TODO: Keep a separate stack of mapped ns-paths,
+      ;; so that users can map symbol-paths arbitarily
       (update-ns-path pop)))
 
 (defn- add-var [ctx var-name data]
@@ -42,40 +44,89 @@
                        {:var-name var-name
                         :order    (count vars)}))))
 
-(defn- add-arity [ctx var-name arity op]
-  (letfn [(add [arity-map]
-            (cond
-              (nil? arity-map)
-              (-> op
-                  (dissoc :args)
-                  (assoc :arglists [(:args op)]))
+(defn- expr-conflict [x y]
+  (cond
+    (not= (:op x) (:op y))
+    {:type ::op-conflict
+     :message (str "Conflicting operations: "
+                   (:op x) " and " (:op y))}
+    (not= (:module-name x) (:module-name y))
+    {:type ::module-confict
+     :message (str "Conflicting module: "
+                   (:module-name x) " and "
+                   (:module-name y))}
+    (not= (:path x) (:path y))
+    {:type ::path-confict
+     :message (str "Conflicting paths: "
+                   (:path x) " and " (:path y))}))
 
-              (not= (:op arity-map) (:op op))
-              (error ::op-conflict
-                     (str "Conflicting operations: "
-                          (:op arity-map) " and " (:op op)))
+(defn- init-expr-conflict [var-data expr]
+  (if-let [existing (first (:init var-data))]
+    (expr-conflict existing expr)
+    (cond
+      (seq (:arities var-data))
+      {:type ::init-arity-conflict
+       :message "Var :init and :arities are mutually exclusive"}
+      (not= :global-get (:op expr))
+      {:type ::invalid-init-op
+       :message "Only :global-get supported as var init expr"})))
 
-              (not= (:module-name arity-map) (:module-name op))
-              (error ::module-confict
-                     (str "Conflicting module: "
-                          (:module-name arity-map) " and "
-                          (:module-name op)))
+(defn- arity-expr-conflict [var-data arity expr]
+  (if (seq (:init var-data))
+    {:type ::init-arity-conflict
+     :message "Var :init and :arities are mutually exclusive"}
+    (when-let [existing (first (get-in var-data [:arities arity]))]
+      (if (and (neg? arity)
+               (not= (count (:args existing))
+                     (count (:args expr))))
+        {:type ::variadic-conflict
+         :message "Different number of required arguments in variadic arity"}
+        (expr-conflict existing expr)))))
 
-              (not= (:path arity-map) (:path op))
-              (error ::path-confict
-                     (str "Conflicting paths: "
-                          (:path arity-map) " and " (:path op)))
+(defn- expr-exception [ctx var-name expr conflict]
+  (ex-info (:message conflict)
+           {:type     (:type conflict)
+            :ns       (:ns-key ctx)
+            :var-name var-name
+            :expr     expr}))
 
-              :else
-              (update arity-map :arglists conj (:args op))))
-          (error [type msg]
-            (throw (ex-info msg
-                            {:type type
-                             :ns (:ns-key ctx)
-                             :var-name var-name
-                             :arity arity
-                             :op op})))]
-    (update-ns ctx update-in [:vars var-name :arities arity] add)))
+(defn- add-init [ctx var-name expr]
+  (update-ns ctx update-in [:vars var-name]
+             (fn [var-data]
+               (if-let [conflict (init-expr-conflict var-data expr)]
+                 (throw (expr-exception ctx var-name expr conflict))
+                 (assoc var-data :init expr)))))
+
+(defn- add-arity [ctx var-name arity expr]
+  (update-ns ctx update-in [:vars var-name]
+             (fn [var-data]
+               (if-let [conflict (arity-expr-conflict var-data arity expr)]
+                 (throw (expr-exception ctx var-name expr conflict))
+                 (update-in var-data [:arities arity] (fnil conj []) expr)))))
+
+(defn- signature-arglists [{:keys [params]}]
+  (let [[req opt] (split-with (complement :optional?) params)
+        args (into [] (map (comp names/cljs-name :name)) req)]
+    (loop [arglists [args]
+           args args
+           opt opt]
+      (if-let [arg (first opt)]
+        (let [args (conj args (names/cljs-name (:name arg)))]
+          (recur (conj arglists args) args (next opt)))
+        arglists))))
+
+(defn- add-signatures [ctx var-name signatures expr-fn]
+  (reduce (fn [ctx signature]
+            ;; TODO: Check for variadic params
+            ;; TODO: Consider param types and docstrings
+            ;; TODO: Consider return value?
+            (reduce (fn [ctx args]
+                      (let [{:keys [args] :as expr} (expr-fn args)]
+                        (add-arity ctx var-name (count args) expr)))
+                    ctx
+                    (signature-arglists signature)))
+          ctx
+          signatures))
 
 (defmulti adapt*
   (fn [_ctx node]
@@ -100,34 +151,10 @@
     ;; TODO: If the type is callable, add arities to call?
     (-> ctx
         (add-var var-name (select-keys node [:doc]))
-        ;; TODO: Arity 0 - fn? Or :init/:alias?
-        (add-arity var-name 0 {:op          :module-get
+        ;; TODO: Add :init expr for consts?
+        (add-arity var-name 0 {:op          :global-get
                                :module-name module
                                :path        (conj (vec path) name)}))))
-
-(defn- signature-arglists [{:keys [params]}]
-  (let [[req opt] (split-with (complement :optional?) params)
-        args (into [] (map (comp names/cljs-name :name)) req)]
-    (loop [arglists [args]
-           args args
-           opt opt]
-      (if-let [arg (first opt)]
-        (let [args (conj args (names/cljs-name (:name arg)))]
-          (recur (conj arglists args) args (next opt)))
-        arglists))))
-
-(defn- add-signatures [ctx var-name signatures arity-fn]
-  (reduce (fn [ctx signature]
-            ;; TODO: Check for variadic params
-            ;; TODO: Consider param types and docstrings
-            ;; TODO: Consider return value?
-            (reduce (fn [ctx args]
-                      (let [{:keys [args] :as arity} (arity-fn args)]
-                        (add-arity ctx var-name (count args) arity)))
-                    ctx
-                    (signature-arglists signature)))
-          ctx
-          signatures))
 
 (defmethod adapt* :function
   [ctx {:keys [name signatures] :as node}]
@@ -137,7 +164,7 @@
         ctx      (add-var ctx var-name (select-keys node [:doc]))]
     (add-signatures ctx var-name signatures
                     (fn [args]
-                      {:op          :module-call
+                      {:op          :global-call
                        :module-name module
                        :path        path
                        :args        args}))))
@@ -171,13 +198,19 @@
         [module & path] (:symbol-path ctx)]
     (-> ctx
         (add-var var-name (select-keys node [:doc]))
-        (add-arity var-name 0 {:op          :module-get
-                               :module-name module
-                               :path        (conj (vec path) name)}))))
+        (add-init var-name {:op          :global-get
+                            :module-name module
+                            :path        (conj (vec path) name)}))))
 
 (defmethod adapt* :type-alias
   [ctx _node]
+  ;; TODO
   ctx)
+
+;; TODO: For class/interface members, check if the name is a valid identifier,
+;; to exclude/handle "indirect" names such as `[Symbol.iterator]`
+;; TODO: Clojurify names, e.g. '?' suffix for booleans, remove `is-` and `get-` prefixes
+;; But then: Handle collisions, e.g. "name" and "getName" (maybe use `-name` for property access?)
 
 (defmethod adapt* :property
   [ctx {:keys [name] :as node}]
@@ -190,8 +223,15 @@
                                :path [name]
                                :args [type-name]}))))
 
-;; TODO: :get-accessor
-;; TODO: :set-accessor
+(defmethod adapt* :get-accessor
+  [ctx _node]
+  ;; TODO: Like :property?
+  ctx)
+
+(defmethod adapt* :set-accessor
+  [ctx _node]
+  ;; TODO: :arg-set, use `set-<name>!` for name?
+  ctx)
 
 (defmethod adapt* :method
   [ctx {:keys [name signatures] :as node}]
@@ -205,12 +245,9 @@
                        :path path
                        :args (into [type-name] args)}))))
 
-;; TODO: After adapting the whole module:
-;; - require referenced modules
-;; - exclude cljs.core names that we use
-
 (defn adapt [module _opts]
   ;; TODO: Support ns-prefix, e.g. "dots"
+  ;; And/or a function: symbol-path => ns-path
   (-> empty-ctx
       (assoc :module-name (:name module))
       (adapt* module)

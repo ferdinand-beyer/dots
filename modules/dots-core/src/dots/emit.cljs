@@ -68,68 +68,121 @@
         (emit-args args)
         (conj "))"))))
 
+(defn- emit-construct [coll path args]
+  (-> coll
+      (conj "(new ")
+      (emit-get path)
+      (emit-args args)
+      (conj ")")))
+
 (defn- module-path [module-name path ns-data]
   (let [alias (get-in ns-data [:requires module-name] "ALIAS-MISSING")]
     (cons (str alias "/" (first path)) (next path))))
 
-(defmulti ^:private emit-op
-  {:arglists '([coll arity-data args ns-data])}
-  (fn [_ arity-data _ _]
-    (:op arity-data)))
+(defmulti ^:private emit-expr
+  {:arglists '([coll expr args ns-data])}
+  (fn [_ expr _ _]
+    (:op expr)))
 
-(defmethod emit-op :module-get
+(defmethod emit-expr :global-get
   [coll {:keys [module-name path]} _ ns-data]
   (emit-get coll (module-path module-name path ns-data)))
 
-(defmethod emit-op :module-set
+(defmethod emit-expr :global-set
   [coll {:keys [module-name path]} args ns-data]
   (emit-set coll (module-path module-name path ns-data) (first args)))
 
-(defmethod emit-op :module-call
+(defmethod emit-expr :global-call
   [coll {:keys [module-name path]} args ns-data]
   (emit-call coll (module-path module-name path ns-data) args))
 
-(defmethod emit-op :arg-get
+(defmethod emit-expr :global-construct
+  [coll {:keys [module-name path]} args ns-data]
+  (emit-construct coll (module-path module-name path ns-data) args))
+
+(defmethod emit-expr :arg-get
   [coll {:keys [path]} args _]
   (emit-get coll (cons (first args) path)))
 
-(defmethod emit-op :arg-set
+(defmethod emit-expr :arg-set
   [coll {:keys [path]} args _]
   (emit-set coll (cons (first args) path) (second args)))
 
-(defmethod emit-op :arg-call
+(defmethod emit-expr :arg-call
   [coll {:keys [path]} args _]
   (emit-call coll (cons (first args) path) (next args)))
 
-(defn- emit-arity [coll {:keys [arglists] :as arity} ns-data]
-  (let [args (first arglists)]
+;; TODO: Support variadic (neg? arity)
+(defn- emit-arity-expr [coll indent _arity exprs ns-data]
+  (let [{:keys [args] :as expr} (first exprs)]
     (-> coll
-        (conj "  ([" (str/join " " args) "]\n" "   ")
-        (emit-op arity args ns-data)
-        (conj ")\n"))))
+        (conj "[" (str/join " " args) "]\n" indent)
+        (emit-expr expr args ns-data))))
 
-;; TODO: Support :alias w/ :module-get op in addition to :arities
-;; TODO: When only one arity, use simple defn
-;; TODO: When all arities have a unique arglist, don't emit :arglists
-;; TODO: Sort arities?
-;; TODO: Merge ranges of aritites
-;; TODO: Emit ops
-(defn- emit-var
+#_(defn- emit-arglists [coll arities]
+    (let [arglists (->> arities
+                        (mapcat val)
+                        (map :args)
+                        distinct
+                        sort)]
+      (-> coll
+          (conj "\n  {:arglists '(")
+          (into (mapcat #(list "[" (str/join " " %) "] ")) arglists)
+          (conj ")}"))))
+
+;; TODO: Merge ranges of aritites (w/ arglists)?
+;; TODO: Alias global functions instead of wrapping them?
+(defn- emit-defn-arities
+  [coll arities ns-data]
+  (if (= 1 (count arities))
+    (let [[arity exprs] (first arities)]
+      (-> coll
+          (conj "  ")
+          (emit-arity-expr "  " arity exprs ns-data)))
+    (-> coll
+        ;(emit-arglists arities)
+        (into (comp (map (fn [[arity exprs]]
+                           (-> ["  ("]
+                               (emit-arity-expr "   " arity exprs ns-data)
+                               (conj ")"))))
+                    (interpose (list "\n"))
+                    cat)
+              (sort-by key arities)))))
+
+(defn- emit-core-symbol [coll symbol ns-data]
+  (if (contains? (:vars ns-data) symbol)
+    (conj coll "cljs.core" symbol)
+    (conj coll symbol)))
+
+(defn- emit-defn
   [coll {:keys [var-name doc arities]} ns-data]
-  ;; - (clj-excluded? x) -> need fqn cljs.core/x
   (-> coll
-      (conj "\n" "(defn " var-name "\n")
+      (conj "(")
+      (emit-core-symbol "defn" ns-data)
+      (conj " " var-name "\n")
       (cond-> doc (-> (emit-doc-string doc)
                       (conj "\n")))
-      (conj "  {:arglists '(")
-      (into (comp (mapcat :arglists)
-                  (mapcat #(list "[" (str/join " " %) "] ")))
-            (vals arities))
-      (conj ")}\n")
-      (reduce-into (fn [coll arity]
-                     (emit-arity coll arity ns-data))
-                   (vals arities))
-      (conj "  )\n")))
+      (emit-defn-arities arities ns-data)
+      (conj ")\n")))
+
+(defn- emit-def
+  [coll {:keys [var-name doc init]} ns-data]
+  (-> coll
+      (conj "(")
+      (emit-core-symbol "def" ns-data)
+      (conj " " var-name "\n")
+      (cond-> doc (-> (emit-doc-string doc)
+                      (conj "\n")))
+      (conj "  ")
+      (emit-expr init nil ns-data)
+      (conj ")\n")))
+
+(defn- emit-var
+  [coll var-data ns-data]
+  (let [coll (conj coll "\n")]
+    (if (:init var-data)
+      (emit-def coll var-data ns-data)
+      (emit-defn coll var-data ns-data))))
 
 (defn- emit-ns-form [coll {:keys [ns-path doc vars requires]}]
   ;; - docstring
@@ -146,7 +199,7 @@
                               "])")
          (seq requires) (-> (conj "\n  (:require")
                             (into (mapcat (fn [[module alias]]
-                                            (list "\n   [" module " :as " alias "]")))
+                                            (list " [" module " :as " alias "]")))
                                   requires)
                             (into ")")))
         (conj ")\n"))))
@@ -162,8 +215,10 @@
     (path/join (apply path/join out-dir dirs) filename)))
 
 (defn- collect-requires [ns-data]
-  (let [module-names (into #{} (comp (mapcat (comp :arities val))
-                                     (keep (comp :module-name val)))
+  (let [module-names (into #{} (comp (map val)
+                                     (mapcat (fn [{:keys [init arities]}]
+                                               (cons init (mapcat val arities))))
+                                     (keep :module-name))
                            (:vars ns-data))]
     (cond-> ns-data
       (seq module-names) (assoc :requires (zipmap module-names
@@ -171,15 +226,16 @@
 
 (defn- emit-namespace
   [out-dir {:keys [ns-path vars] :as ns-data}]
-  (let [file-path (ns-filepath out-dir ns-path)
-        ns-data   (collect-requires ns-data)]
-    (fs/mkdir-sync (path/dirname file-path) #js {:recursive true})
-    (io/with-open [writer (io/file-writer file-path)]
-      (-> (writer-coll writer)
-          (emit-ns-form ns-data)
-          (reduce-into (fn [coll var-data]
-                         (emit-var coll var-data ns-data))
-                       (vals vars))))))
+  (when (seq vars)
+    (let [file-path (ns-filepath out-dir ns-path)
+          ns-data   (collect-requires ns-data)]
+      (fs/mkdir-sync (path/dirname file-path) #js {:recursive true})
+      (io/with-open [writer (io/file-writer file-path)]
+        (-> (writer-coll writer)
+            (emit-ns-form ns-data)
+            (reduce-into (fn [coll var-data]
+                           (emit-var coll var-data ns-data))
+                         (sort-by :order (vals vars))))))))
 
 (defn- emit-namespaces
   [out-dir namespaces]
