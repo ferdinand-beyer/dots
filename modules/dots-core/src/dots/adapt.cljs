@@ -135,10 +135,12 @@
     trait))
 
 (defn- adapt* [ctx node]
-  (reduce (fn [ctx trait]
-            (adapt-trait ctx trait node))
-          ctx
-          (:traits node)))
+  (if (:internal? node)
+    ctx
+    (reduce (fn [ctx trait]
+              (adapt-trait ctx trait node))
+            ctx
+            (:traits node))))
 
 (defmethod adapt-trait :default
   [ctx trait _node]
@@ -210,11 +212,6 @@
                             :module-name module
                             :path        (conj (vec path) name)}))))
 
-(defmethod adapt-trait :type-alias
-  [ctx _ _node]
-  ;; TODO
-  ctx)
-
 ;; TODO: For class/interface members, check if the name is a valid identifier,
 ;; to exclude/handle "indirect" names such as `[Symbol.iterator]`
 ;; TODO: Clojurify names, e.g. '?' suffix for booleans, remove `is-` and `get-` prefixes
@@ -230,16 +227,6 @@
         (add-arity var-name 1 {:op   :arg-get
                                :path [name]
                                :args [type-name]}))))
-
-(defmethod adapt-trait :get-accessor
-  [ctx _ _node]
-  ;; TODO: Like :property?
-  ctx)
-
-(defmethod adapt-trait :set-accessor
-  [ctx _ _node]
-  ;; TODO: :arg-set, use `set-<name>!` for name?
-  ctx)
 
 (defmethod adapt-trait :method
   [ctx _ {:keys [name signatures] :as node}]

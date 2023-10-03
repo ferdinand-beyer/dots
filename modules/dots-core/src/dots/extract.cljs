@@ -14,6 +14,7 @@
             [dots.typescript.symbol-flags :as symbol-flags]
             [dots.typescript.type :as type]
             [dots.typescript.type-checker :as type-checker]
+            [dots.util.names :as names]
             [dots.util.table :as table]))
 
 (def ^:dynamic *debug?* false)
@@ -200,14 +201,16 @@
         (update :traits conj :module)
         (add-members env syms))))
 
-(defn- common [env sym]
+(defn- symbol-common [env sym]
   (let [checker (:type-checker env)
-        doc-str (doc-string sym)]
-    (cond-> {:name (symbol/name sym)
-             :traits #{}
+        doc-str (doc-string sym)
+        name    (symbol/name sym)]
+    (cond-> {:name      name
+             :traits    #{}
+             :internal? (names/internal? name)
              ;; TODO: Only for types, so that we can reference them?
              ;; TODO: Register in the environment? Allow to resolve types
-             :fqn  (type-checker/fully-qualified-name checker sym)}
+             :fqn       (type-checker/fully-qualified-name checker sym)}
       doc-str  (assoc :doc doc-str)
       *debug?* (assoc :debug/types (debug-types env sym)
                       :debug/flags (symbol/flags sym)))))
@@ -215,9 +218,9 @@
 (defn- has? [flags test]
   (not= 0 (bit-and flags test)))
 
-(defn- extract-symbol [env sym]
+(defn- amend-symbol [data env sym]
   (let [flags (symbol/flags sym)]
-    (cond-> (common env sym)
+    (cond-> data
       (has? flags symbol-flags/variable) (extract-variable env sym)
       (has? flags symbol-flags/function) (extract-function env sym)
       (has? flags symbol-flags/class) (extract-class env sym)
@@ -231,6 +234,10 @@
       (has? flags symbol-flags/method) (extract-method env sym)
       (has? flags symbol-flags/get-accessor) (extract-get-accessor env sym)
       (has? flags symbol-flags/set-accessor) (extract-set-accessor env sym))))
+
+(defn- extract-symbol [env sym]
+  (-> (symbol-common env sym)
+      (amend-symbol env sym)))
 
 (defn extract [module-name opts]
   (let [program (create-program module-name opts)

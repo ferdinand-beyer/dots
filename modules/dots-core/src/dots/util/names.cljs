@@ -8,9 +8,15 @@
 (defn core-name? [n]
   (contains? core-names n))
 
+(defn internal? [n]
+  (str/starts-with? n "_"))
+
 (defn cljs-name [n]
   {:pre [(string? n)]}
   (-> n
       (str/replace "\"" "")
       (str/replace #"\W+" "_")
-      csk/->kebab-case-string))
+      csk/->kebab-case-string
+      (cond->
+       (str/starts-with? n "_") (->> (str "-"))
+       (str/ends-with? n "_") (str "*"))))
