@@ -3,7 +3,7 @@
 (defn flag-test [flags flag]
   (not (zero? (bit-and flags flag))))
 
-(defn- bits [field]
+(defn bits [field]
   (->> (iterate #(bit-shift-left % 1) 1)
        (take-while #(<= % field))
        (map #(bit-and field %))

@@ -10,6 +10,10 @@
 ;;    readonly assertClause?: AssertClause;
 ;;}
 
+(defn import-clause
+  ^ImportClause [^ImportDeclaration import-declaration]
+  (.-importClause import-declaration))
+
 (defn module-specifier
   ^Expression [^ImportDeclaration import-declaration]
   (.-moduleSpecifier import-declaration))

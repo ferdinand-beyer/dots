@@ -24,10 +24,11 @@
   (run! println errors)
   (exit 1))
 
-(defn- run [module-name {:keys [exit?]
-                         :or {exit? true}
-                         :as opts}]
-  (let [module     (extract/extract module-name)
+(defn- run
+  [module-name {:keys [exit?]
+                :or {exit? true}
+                :as opts}]
+  (let [module     (extract/extract module-name opts)
         namespaces (adapt/adapt module opts)]
     (emit/emit-project namespaces opts))
   (when exit?
@@ -49,10 +50,17 @@
 
 (comment
   (run "vscode" {:output-dir "target/dots-vscode", :exit? false})
+  (run "typescript" {:output-dir "target/dots-typescript", :exit? false})
+  (run "path" {:output-dir "target/dots-path", :exit? false})
+  (run "fs" {:output-dir "target/dots-fs", :exit? false})
 
   (set! extract/*debug?* true)
 
-  (def vscode (extract/extract "vscode"))
+  (def vscode (extract/extract "vscode" {}))
+  (def ts (extract/extract "typescript" {}))
+
+  (def path (extract/extract "path" {}))
+  (def path-ns (adapt/adapt path nil))
 
   (run! prn (sort (keys (:exports vscode))))
   (get-in vscode [:exports "Event"])

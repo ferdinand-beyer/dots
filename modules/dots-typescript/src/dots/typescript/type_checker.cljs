@@ -227,9 +227,17 @@
   ^"Signature | undefined" [^TypeChecker type-checker ^SignatureDeclaration declaration]
   (.getSignatureFromDeclaration type-checker declaration))
 
+(defn aliased-symbol
+  ^Symbol [^TypeChecker type-checker ^Symbol symbol]
+  (.getAliasedSymbol type-checker symbol))
+
 (defn exports-of-module
   ^"Symbol[]" [^TypeChecker type-checker ^Symbol module-symbol]
   (.getExportsOfModule type-checker module-symbol))
+
+(defn ambient-modules
+  ^"Symbol[]" [^TypeChecker type-checker]
+  (.getAmbientModules type-checker))
 
 (defn optional-parameter?
   [^TypeChecker type-checker ^ParameterDeclaration node]

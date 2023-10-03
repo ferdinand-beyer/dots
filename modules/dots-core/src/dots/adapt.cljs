@@ -2,7 +2,8 @@
   "Determine which ClojureScript adapter namespaces and vars to generate
    from TypeScript module information."
   (:require [clojure.string :as str]
-            [dots.util.names :as names]))
+            [dots.util.names :as names]
+            [dots.util.table :as table]))
 
 (def empty-ctx
   {:namespaces  {}
@@ -16,6 +17,7 @@
     (assoc ctx :ns-path ns-path :ns-key ns-key)))
 
 (defn- update-ns [ctx f & args]
+  {:pre [(:ns-key ctx)]}
   (apply update-in ctx [:namespaces (:ns-key ctx)] f args))
 
 (defn- assoc-ns-path [ctx]
@@ -39,12 +41,10 @@
 
 (defn- add-var [ctx var-name data]
   ;; TODO: Handle name conflicts (rename?)
-  (update-ns ctx update :vars
-             (fn [vars]
-               (update vars var-name merge
-                       data
-                       {:var-name var-name
-                        :order    (count vars)}))))
+  (update-ns ctx
+             update :vars
+             table/tupdate var-name
+             merge data {:var-name var-name}))
 
 (defn- expr-conflict [x y]
   (cond
@@ -130,24 +130,30 @@
           ctx
           signatures))
 
-(defmulti adapt*
-  (fn [_ctx node]
-    (:kind node)))
+(defmulti adapt-trait
+  (fn [_ctx trait _node]
+    trait))
 
-(defmethod adapt* :default
-  [ctx node]
-  (println "Warning: No adapt* implementation for" (:kind node))
+(defn- adapt* [ctx node]
+  (reduce (fn [ctx trait]
+            (adapt-trait ctx trait node))
+          ctx
+          (:traits node)))
+
+(defmethod adapt-trait :default
+  [ctx trait _node]
+  (println "Warning: No adapt-trait implementation for" trait)
   ctx)
 
-(defmethod adapt* :module
-  [ctx {:keys [name exports] :as node}]
+(defmethod adapt-trait :module
+  [ctx _ {:keys [name members] :as node}]
   (as-> ctx %
     (enter-namespace % name (select-keys node [:doc]))
-    (reduce adapt* % (vals exports))
+    (reduce adapt* % (table/tvals members))
     (leave-namespace %)))
 
-(defmethod adapt* :variable
-  [ctx {:keys [name] :as node}]
+(defmethod adapt-trait :variable
+  [ctx _ {:keys [name] :as node}]
   (let [var-name        (names/cljs-name name)
         [module & path] (:symbol-path ctx)]
     ;; TODO: If the type is callable, add arities to call?
@@ -158,8 +164,8 @@
                                :module-name module
                                :path        (conj (vec path) name)}))))
 
-(defmethod adapt* :function
-  [ctx {:keys [name signatures] :as node}]
+(defmethod adapt-trait :function
+  [ctx _ {:keys [name signatures] :as node}]
   (let [var-name (names/cljs-name name)
         [module & path] (:symbol-path ctx)
         path     (conj (vec path) name)
@@ -174,28 +180,28 @@
 (defn- adapt-interface [ctx {:keys [name members] :as node}]
   (as-> ctx %
     (enter-namespace % name (select-keys node [:doc]))
-    (reduce adapt* % (vals members))
+    (reduce adapt* % (table/tvals members))
     (leave-namespace %)))
 
-(defmethod adapt* :class
-  [ctx node]
+(defmethod adapt-trait :class
+  [ctx _ node]
   ;; TODO: Look for construct signatures?
   (adapt-interface ctx node))
 
-(defmethod adapt* :interface
-  [ctx node]
+(defmethod adapt-trait :interface
+  [ctx _ node]
   ;; TODO: Add `invoke` var when the interface has call signatures?
   (adapt-interface ctx node))
 
-(defmethod adapt* :enum
-  [ctx {:keys [name members] :as node}]
+(defmethod adapt-trait :enum
+  [ctx _ {:keys [name members] :as node}]
   (as-> ctx %
     (enter-namespace % name (select-keys node [:doc]))
-    (reduce adapt* % (vals members))
+    (reduce adapt* % (table/tvals members))
     (leave-namespace %)))
 
-(defmethod adapt* :enum-member
-  [ctx {:keys [name] :as node}]
+(defmethod adapt-trait :enum-member
+  [ctx _ {:keys [name] :as node}]
   (let [var-name        (names/cljs-name name)
         [module & path] (:symbol-path ctx)]
     (-> ctx
@@ -204,8 +210,8 @@
                             :module-name module
                             :path        (conj (vec path) name)}))))
 
-(defmethod adapt* :type-alias
-  [ctx _node]
+(defmethod adapt-trait :type-alias
+  [ctx _ _node]
   ;; TODO
   ctx)
 
@@ -214,8 +220,8 @@
 ;; TODO: Clojurify names, e.g. '?' suffix for booleans, remove `is-` and `get-` prefixes
 ;; But then: Handle collisions, e.g. "name" and "getName" (maybe use `-name` for property access?)
 
-(defmethod adapt* :property
-  [ctx {:keys [name] :as node}]
+(defmethod adapt-trait :property
+  [ctx _ {:keys [name] :as node}]
   ;; TODO: If the type is callable, add a function?
   (let [var-name  (names/cljs-name name)
         type-name (names/cljs-name (last (:symbol-path ctx)))]
@@ -225,18 +231,18 @@
                                :path [name]
                                :args [type-name]}))))
 
-(defmethod adapt* :get-accessor
-  [ctx _node]
+(defmethod adapt-trait :get-accessor
+  [ctx _ _node]
   ;; TODO: Like :property?
   ctx)
 
-(defmethod adapt* :set-accessor
-  [ctx _node]
+(defmethod adapt-trait :set-accessor
+  [ctx _ _node]
   ;; TODO: :arg-set, use `set-<name>!` for name?
   ctx)
 
-(defmethod adapt* :method
-  [ctx {:keys [name signatures] :as node}]
+(defmethod adapt-trait :method
+  [ctx _ {:keys [name signatures] :as node}]
   (let [var-name  (names/cljs-name name)
         type-name (names/cljs-name (last (:symbol-path ctx)))
         path      [name]
@@ -251,9 +257,5 @@
   ;; TODO: Support ns-prefix, e.g. "dots"
   ;; And/or a function: symbol-path => ns-path
   (-> empty-ctx
-      (assoc :module-name (:name module))
       (adapt* module)
       :namespaces))
-
-(comment
-  (adapt* empty-ctx {:kind :module}))

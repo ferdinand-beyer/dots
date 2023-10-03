@@ -4,7 +4,8 @@
             [dots.node.fs :as fs]
             [dots.node.path :as path]
             [dots.util.io :as io]
-            [dots.util.names :as names]))
+            [dots.util.names :as names]
+            [dots.util.table :as table]))
 
 (defn- writer-coll
   "Returns a pseudo-collection that writes items with `writer` when they
@@ -237,7 +238,7 @@
             (emit-ns-form ns-data)
             (reduce-into (fn [coll var-data]
                            (emit-var coll var-data ns-data))
-                         (sort-by :order (vals vars))))))))
+                         (table/tvals vars)))))))
 
 (defn- emit-namespaces
   [out-dir namespaces]

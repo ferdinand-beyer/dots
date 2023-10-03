@@ -1,6 +1,9 @@
 (ns dots.typescript
   (:require ["typescript" :as ts]))
 
+(defn default-compiler-options []
+  (ts/getDefaultCompilerOptions))
+
 (defn create-source-file
   ([file-name source-text ^"ScriptTarget | CreateSourceFileOptions" language-version-or-options]
    (ts/createSourceFile file-name source-text language-version-or-options))
