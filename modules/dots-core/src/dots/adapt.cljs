@@ -148,10 +148,10 @@
   ctx)
 
 (defmethod adapt-trait :module
-  [ctx _ {:keys [name members] :as node}]
+  [ctx _ {:keys [name exports] :as node}]
   (as-> ctx %
     (enter-namespace % name (select-keys node [:doc]))
-    (reduce adapt* % (table/tvals members))
+    (reduce adapt* % (table/tvals exports))
     (leave-namespace %)))
 
 (defmethod adapt-trait :variable
@@ -188,6 +188,7 @@
 (defmethod adapt-trait :class
   [ctx _ node]
   ;; TODO: Look for construct signatures?
+  ;; TODO: Adapt exports (static members)
   (adapt-interface ctx node))
 
 (defmethod adapt-trait :interface

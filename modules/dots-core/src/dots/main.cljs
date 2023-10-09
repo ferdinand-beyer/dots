@@ -64,10 +64,14 @@
 
   (run! prn (sort (keys (:exports vscode))))
   (get-in vscode [:exports "Event"])
-  (get-in vscode [:exports "TextDocument"])
+  (get-in vscode [:exports "Command"])
   (get-in vscode [:exports "authentication" :exports])
   (get-in vscode [:exports "authentication"
                   :exports "getSession"])
+  (get-in vscode [:exports "DataTransfer"])
+  (get-in vscode [:exports "Uri" :exports "joinPath"])
+
+  (get-in ts [:exports "TypeChecker"])
 
   (get-in vscode [:exports "TextEditorSelectionChangeKind"])
 

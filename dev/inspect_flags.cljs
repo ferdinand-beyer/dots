@@ -31,6 +31,9 @@
   (doseq [[name val] (parse-source source)]
     (println " " (csk/->kebab-case-keyword name) val)))
 
+(defn expand [flag-type]
+  (update-vals flag-type #(into #{} (map (flags/reverse-map flag-type)) (flags/bits %))))
+
 (def syntax-kind
   (parse-type
    "    Unknown = 0,
@@ -603,8 +606,14 @@
         InstantiationExpressionType = 8388608,"))
 
 (comment
+  (expand type-flags)
+
+  (flags/flags-seq type-flags 1)
   (flags/flags-seq type-flags 4)
+  (flags/flags-seq type-flags 1048592)
+  (flags/flags-seq type-flags 1048576)
   (flags/flags-seq type-flags 524288)
+
   (flags/flags-seq object-flags 524293)
 
   (flags/flags-seq syntax-kind 278)
@@ -614,6 +623,7 @@
   (flags/flags-seq symbol-flags 2097152)
   (flags/flags-seq symbol-flags 1026)
   (flags/flags-seq symbol-flags 64)
+  (flags/flags-seq symbol-flags 33562624)
 
   ;;
   )

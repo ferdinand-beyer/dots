@@ -56,3 +56,11 @@
    (ts/getPreEmitDiagnostics program source-file))
   (^"readonly Diagnostic[]" [^Program program ^SourceFile source-file ^CancellationToken cancellation-token]
    (ts/getPreEmitDiagnostics program source-file cancellation-token)))
+
+(defn has-rest-parameter?
+  [^SignatureDeclaration s]
+  (ts/hasRestParameter s))
+
+(defn rest-parameter?
+  [^ParameterDeclaration node]
+  (ts/isRestParameter node))

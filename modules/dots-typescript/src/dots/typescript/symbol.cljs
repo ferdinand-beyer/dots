@@ -33,6 +33,12 @@
 (defn value-declaration [^Symbol symbol]
   (.-valueDeclaration symbol))
 
+(defn members [^Symbol symbol]
+  (.-members symbol))
+
+(defn exports [^Symbol symbol]
+  (.-exports symbol))
+
 (defn documentation-comment
   (^"SymbolDisplayPart[]" [^Symbol symbol]
    (.getDocumentationComment symbol))

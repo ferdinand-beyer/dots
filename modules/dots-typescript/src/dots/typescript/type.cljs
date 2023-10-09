@@ -38,7 +38,7 @@
 (defn flags [^Type type]
   (.getFlags type))
 
-(defn symbol ^Symbol [^Type type]
+(defn symbol ^"Symbol | undefined" [^Type type]
   (.getSymbol type))
 
 (defn properties ^"Symbol[]" [^Type type]

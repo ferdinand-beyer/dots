@@ -13,7 +13,7 @@
   (let [r (into {} (map (juxt val key)) m)]
     (with-meta m {::r r})))
 
-(defn- reverse-map [ft]
+(defn reverse-map [ft]
   (::r (meta ft)))
 
 (defn rflag [ft flag]

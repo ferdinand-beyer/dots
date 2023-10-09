@@ -1,12 +1,21 @@
-(ns dots.typescript.script-kind)
+(ns dots.typescript.script-kind
+  (:require ["typescript" :as typescript]))
 
-(def unknown 0)
-(def js 1)
-(def jsx 2)
-(def ts 3)
-(def tsx 4)
-(def external 5)
-(def json 6)
-;; Used on extensions that doesn't define the ScriptKind but the content defines it.
-;; Deferred extensions are going to be included in all project contexts.
-(def deferred 7)
+(def unknown (.-Unknown typescript/ScriptKind))
+
+(def js (.-JS typescript/ScriptKind))
+
+(def jsx (.-JSX typescript/ScriptKind))
+
+(def ts (.-TS typescript/ScriptKind))
+
+(def tsx (.-TSX typescript/ScriptKind))
+
+(def external (.-External typescript/ScriptKind))
+
+(def json (.-JSON typescript/ScriptKind))
+
+(def deferred
+  "Used on extensions that doesn't define the ScriptKind but the content defines it.
+   Deferred extensions are going to be included in all project contexts."
+  (.-Deferred typescript/ScriptKind))

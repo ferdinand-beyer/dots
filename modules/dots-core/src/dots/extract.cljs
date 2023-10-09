@@ -5,8 +5,11 @@
             [dots.typescript :as ts]
             [dots.typescript.import-clause :as import-clause]
             [dots.typescript.import-declaration :as import-declaration]
+            [dots.typescript.module-kind :as module-kind]
             [dots.typescript.namespace-import :as namespace-import]
             [dots.typescript.program :as program]
+            [dots.typescript.script-kind :as script-kind]
+            [dots.typescript.script-target :as script-target]
             [dots.typescript.signature :as signature]
             [dots.typescript.signature-kind :as signature-kind]
             [dots.typescript.source-file :as source-file]
@@ -14,6 +17,7 @@
             [dots.typescript.symbol-flags :as symbol-flags]
             [dots.typescript.type :as type]
             [dots.typescript.type-checker :as type-checker]
+            [dots.typescript.type-flags :as type-flags]
             [dots.util.names :as names]
             [dots.util.table :as table]))
 
@@ -36,23 +40,32 @@
 (defn- proxy-compiler-host
   "Creates a CompilerHost that resolves our special proxy file."
   [compiler-opts module-name opts]
-  (let [host        (ts/create-compiler-host compiler-opts true)
+  (let [parent-nodes? false
+        script-kind script-kind/ts
+        host        (ts/create-compiler-host compiler-opts parent-nodes?)
         source-text (proxy-source-text module-name opts)]
     (letfn [(file-exists [file-name]
               (or (proxy-file-name? file-name)
                   (.fileExists host file-name)))
             (get-source-file [file-name target-or-opts on-error create?]
               (if (proxy-file-name? file-name)
-                (ts/create-source-file proxy-file-name source-text target-or-opts true)
+                (ts/create-source-file proxy-file-name source-text target-or-opts parent-nodes? script-kind)
                 (.getSourceFile host file-name target-or-opts on-error create?)))]
       (.assign js/Object #js {} host #js {:fileExists    file-exists
                                           :getSourceFile get-source-file}))))
 
+(def compiler-opts
+  (.assign js/Object
+           #js {}
+           (ts/default-compiler-options)
+           #js {:allowJs true
+                :strict true
+                :module module-kind/es-2015
+                :target script-target/es-next}))
+
 (defn- create-program
-  [module-name {:keys [compiler-opts] :as opts}]
-  (let [compiler-opts (or compiler-opts
-                          (ts/default-compiler-options))
-        host (proxy-compiler-host compiler-opts module-name opts)]
+  [module-name opts]
+  (let [host (proxy-compiler-host compiler-opts module-name opts)]
     (ts/create-program #js [proxy-file-name] compiler-opts host)))
 
 (defn- import-identifier
@@ -71,6 +84,43 @@
          (type-checker/symbol-at-location checker)
          (type-checker/aliased-symbol checker))))
 
+;; FLAGS
+
+(defn- has? [flags test]
+  (not= 0 (bit-and flags test)))
+
+;; TYPE
+
+(defn- debug-type [{:keys [type-checker]} type]
+  (let [sym (type/symbol type)
+        fqn (some->> (type/symbol type)
+                     (type-checker/fully-qualified-name type-checker))]
+    (cond-> {:str   (type-checker/type-to-string type-checker type)
+             :flags (type/flags type)
+             :symbol (when sym
+                       {:name (symbol/name sym)
+                        :flags (symbol/flags sym)})}
+      (some? fqn) (assoc :fqn fqn)
+      (type/literal? type) (assoc :value (type/value type))
+      (type/class-or-interface? type) (assoc :object-flags (type/object-flags type)))))
+
+(defn- extract-type [env type]
+  (let [checker (:type-checker env)
+        flags   (type/flags type)]
+    (cond-> {:str (type-checker/type-to-string checker type)}
+      (has? flags type-flags/any) (assoc :any? true)
+      (has? flags type-flags/string) (assoc :primitive :string)
+      (has? flags type-flags/number) (assoc :primitive :number)
+      (has? flags type-flags/boolean) (assoc :primitive :boolean)
+      (has? flags type-flags/undefined) (assoc :primitive :undefined)
+      *debug?* (assoc :debug/type-flags flags))))
+
+(defn- extract-symbol-type [env sym]
+  (let [checker (:type-checker env)]
+    (extract-type env (type-checker/type-of-symbol checker sym))))
+
+;; SYMBOL
+
 (defn- doc-string [sym]
   (let [parts (symbol/documentation-comment sym)]
     (when (seq parts)
@@ -78,23 +128,20 @@
 
 (declare extract-symbol)
 
-(defn- add-members [data env syms]
+(defn- add-members [data k env syms]
   (cond-> data
-    (seq syms) (update :members (fn [members]
-                                  (reduce (fn [members sym]
-                                            (let [d (extract-symbol env sym)]
-                                              (table/tassoc members (:name d) d)))
-                                          members
-                                          syms)))))
+    (seq syms)
+    (update k (fn [table]
+                (reduce (fn [table sym]
+                          (let [data (extract-symbol env sym)]
+                            (table/tassoc table (:name data) data)))
+                        table
+                        syms)))))
 
-(defn- debug-type [{:keys [type-checker]} type]
-  (let [fqn (some->> (type/symbol type)
-                     (type-checker/fully-qualified-name type-checker))]
-    (cond-> {:str   (type-checker/type-to-string type-checker type)
-             :flags (type/flags type)}
-      (some? fqn) (assoc :fqn fqn)
-      (type/literal? type) (assoc :value (type/value type))
-      (type/class-or-interface? type) (assoc :object-flags (type/object-flags type)))))
+(defn- add-type-members [data env type]
+  (let [checker (:type-checker env)
+        syms    (type-checker/properties-of-type checker type)]
+    (add-members data :members env syms)))
 
 ;; TODO: Represent types as Clojure data (hiccup)?
 ;; At least understand some basics:
@@ -107,19 +154,22 @@
 (defn- debug-types [{:keys [type-checker] :as env} sym]
   (-> {:type          (type-checker/type-of-symbol type-checker sym)
        :declared-type (type-checker/declared-type-of-symbol type-checker sym)}
-      (update-vals #(debug-type env %))))
+      (update-vals #(extract-type env %))))
 
 (defn- extract-parameter [env sym]
   (let [checker (:type-checker env)
         decl    (symbol/value-declaration sym)]
     (-> (extract-symbol env sym)
-        (assoc :optional? (type-checker/optional-parameter? checker decl)))))
+        (assoc :type (extract-symbol-type env sym))
+        (cond->
+         (type-checker/optional-parameter? checker decl) (assoc :optional? true)
+         (ts/rest-parameter? decl) (assoc :rest? true)))))
 
 (defn- extract-signature [env sig]
   (let [checker     (:type-checker env)
         return-type (type-checker/return-type-of-signature checker sig)]
-    (cond-> {:params (map #(extract-parameter env %) (signature/parameters sig))}
-      *debug?* (assoc :debug/return-type (debug-type env return-type)))))
+    (cond-> {:params      (map #(extract-parameter env %) (signature/parameters sig))
+             :return-type (extract-type env return-type)})))
 
 (defn- extract-signatures
   ([env type]
@@ -132,8 +182,12 @@
 (defn- add-signatures [data env type]
   (update data :signatures into (extract-signatures env type)))
 
-(defn- extract-property [data _env _sym]
-  (update data :traits conj :property))
+(defn- extract-property [data env sym]
+  (-> data
+      (update :traits conj :property)
+      (assoc :type (extract-symbol-type env sym))
+      (cond-> (has? (symbol/flags sym) symbol-flags/optional)
+        (assoc :optional? true))))
 
 (defn- extract-method [data env sym]
   (let [checker (:type-checker env)
@@ -148,8 +202,10 @@
 (defn- extract-set-accessor [data _env _sym]
   (update data :traits conj :set-accessor))
 
-(defn- extract-variable [data _env _sym]
-  (update data :traits conj :variable))
+(defn- extract-variable [data env sym]
+  (-> data
+      (update :traits conj :variable)
+      (assoc :type (extract-symbol-type env sym))))
 
 (defn- extract-function [data env sym]
   (let [checker (:type-checker env)
@@ -157,11 +213,6 @@
     (-> data
         (update :traits conj :function)
         (add-signatures env type))))
-
-(defn- add-type-members [data env type]
-  (let [checker (:type-checker env)
-        syms    (type-checker/properties-of-type checker type)]
-    (add-members data env syms)))
 
 (defn- extract-class-or-interface
   [trait data env sym]
@@ -173,7 +224,10 @@
         (add-signatures env type))))
 
 (defn- extract-class [data env sym]
-  (extract-class-or-interface :class data env sym))
+  (let [table (symbol/exports sym)]
+    (-> (extract-class-or-interface :class data env sym)
+        ;; Static members
+        (add-members :exports env (.values ^js table)))))
 
 (defn- extract-interface [data env sym]
   (extract-class-or-interface :interface data env sym))
@@ -199,24 +253,22 @@
         syms    (type-checker/exports-of-module checker sym)]
     (-> data
         (update :traits conj :module)
-        (add-members env syms))))
+        (add-members :exports env syms))))
 
 (defn- symbol-common [env sym]
   (let [checker (:type-checker env)
         doc-str (doc-string sym)
-        name    (symbol/name sym)]
-    (cond-> {:name      name
-             :traits    #{}
-             :internal? (names/internal? name)
+        sym-name (symbol/name sym)]
+    (cond-> {:name   (type-checker/symbol-to-string checker sym)
+             :traits #{}
              ;; TODO: Only for types, so that we can reference them?
              ;; TODO: Register in the environment? Allow to resolve types
-             :fqn       (type-checker/fully-qualified-name checker sym)}
+             :fqn    (type-checker/fully-qualified-name checker sym)}
+      (names/internal? sym-name) (assoc :internal? true)
       doc-str  (assoc :doc doc-str)
-      *debug?* (assoc :debug/types (debug-types env sym)
-                      :debug/flags (symbol/flags sym)))))
-
-(defn- has? [flags test]
-  (not= 0 (bit-and flags test)))
+      *debug?* (assoc :debug/name  sym-name
+                      :debug/flags (symbol/flags sym)
+                      :debug/types (debug-types env sym)))))
 
 (defn- amend-symbol [data env sym]
   (let [flags (symbol/flags sym)]
@@ -248,4 +300,8 @@
     ;; interface
     (-> (extract-symbol env symbol)
         ;; TODO Hack to set requires correctly
+        ;; We should keep track of how we imported the module,
+        ;; to emit correct :require code.  However, we should
+        ;; not change module names, because we could use them to
+        ;; resolve fully-qualified names
         (assoc :name (str "\"" module-name "\"")))))
