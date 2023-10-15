@@ -166,7 +166,7 @@
         (add-var var-name (select-keys node [:doc]))
         ;; TODO: Add :init expr for consts?
         (add-arity var-name 0 {:op          :global-get
-                               :module-name (:module-name ctx)
+                               :module-name (get-in ctx [:module :import-name])
                                :path        (conj (vec path) name)}))))
 
 (defmethod adapt-trait :function
@@ -178,7 +178,7 @@
     (add-signatures ctx var-name signatures
                     (fn [args]
                       {:op          :global-call
-                       :module-name (:module-name ctx)
+                       :module-name (get-in ctx [:module :import-name])
                        :path        path
                        :args        args}))))
 
@@ -213,7 +213,7 @@
     (-> ctx
         (add-var var-name (select-keys node [:doc]))
         (add-init var-name {:op          :global-get
-                            :module-name (:module-name ctx)
+                            :module-name (get-in ctx [:module :import-name])
                             :path        (conj (vec path) name)}))))
 
 ;; TODO: For class/interface members, check if the name is a valid identifier,
@@ -253,7 +253,7 @@
   (let [{:keys [import-name]} module
         {:keys [namespace]}   opts]
     (-> empty-ctx
-        (assoc :module-name import-name
+        (assoc :module module
                :root-ns-path (if namespace
                                (str/split namespace #"\.")
                                (default-root-ns-path import-name)))

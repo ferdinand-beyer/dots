@@ -164,13 +164,16 @@
       ;; TypeScript AST viewer reports that there is a Primitive flag, but the d.ts does not contain it?
       ;; Some of these flags are mutually exclusive and could be checked using a mask and =?
       (has? flags type-flags/any) (assoc :any? true)
+      (has? flags type-flags/unknown) (assoc :unknown? true)
       (has? flags type-flags/string) (assoc :primitive :string, :string? true)
       (has? flags type-flags/number) (assoc :primitive :number, :number? true)
       (has? flags type-flags/boolean) (assoc :primitive :boolean, :boolean? true)
       (has? flags type-flags/enum) (assoc :enum? true)
-      (has? flags type-flags/enum) (assoc :primitive :void, :void? true)
+      (has? flags type-flags/void) (assoc :primitive :void, :void? true)
       (has? flags type-flags/undefined) (assoc :primitive :undefined, :undefined? true)
       (has? flags type-flags/null) (assoc :null? true)
+      (has? flags type-flags/never) (assoc :never? true)
+      (has? flags type-flags/type-parameter) (assoc :param? true)
       (has? flags type-flags/object) (extract-object-type env type)
       (type/literal? type) (assoc :literal (type/value type))
       (type/union-or-intersection? type) (extract-union-or-intersection-type env type)
@@ -368,4 +371,12 @@
     ;; For example, the "path" module exports the `PlatformPath`
     ;; interface
     (-> (extract-symbol env symbol)
-        (assoc :import-name module-name))))
+        (assoc :import-name module-name))
+    #_(let [module (-> (extract-symbol env symbol)
+                       (assoc :import-name module-name))]
+        (tap> (->> (vals @(:types* env))
+                   (remove :object?)
+                   (remove :literal)
+                   (map (juxt :str identity))
+                   (into {})))
+        module)))
