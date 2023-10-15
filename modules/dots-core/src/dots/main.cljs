@@ -61,6 +61,8 @@
 
   (def path (extract/extract "path" {}))
 
+  (tap> (get-in vscode [:exports "Position"]))
+
   (run! prn (sort (keys (:exports vscode))))
   (get-in vscode [:exports "Event"])
   (get-in vscode [:exports "Command"])

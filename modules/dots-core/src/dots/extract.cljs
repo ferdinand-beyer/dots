@@ -147,8 +147,6 @@
 (defn- merge-union-type [props types]
   (apply merge props (map #(select-keys % type-flag-keys) types)))
 
-;; TODO: Enums will also be unions of their literal types...
-;; type-flags/enum-literal
 (defn- extract-union-or-intersection-type [props env type]
   (let [component-types (mapv #(extract-type env %) (type/types type))]
     (if (type/union? type)
@@ -156,6 +154,13 @@
           (merge-union-type component-types)
           (assoc :union component-types))
       (assoc props :intersection component-types))))
+
+(defn- extract-enum-type [props env type]
+  (let [sym (type/symbol type)]
+    ;; TODO: What's the difference between `enum` and `enum-literal`?
+    ;; A enum type gets `enum-literal` + `union` flags...
+    (cond-> (assoc props :enum? true)
+      sym (assoc :fqn (fqn env sym)))))
 
 (defn- extract-type* [env type]
   (let [checker (:type-checker env)
@@ -168,7 +173,7 @@
       (has? flags type-flags/string) (assoc :primitive :string, :string? true)
       (has? flags type-flags/number) (assoc :primitive :number, :number? true)
       (has? flags type-flags/boolean) (assoc :primitive :boolean, :boolean? true)
-      (has? flags type-flags/enum) (assoc :enum? true)
+      (has? flags type-flags/enum-like) (extract-enum-type env type)
       (has? flags type-flags/void) (assoc :primitive :void, :void? true)
       (has? flags type-flags/undefined) (assoc :primitive :undefined, :undefined? true)
       (has? flags type-flags/null) (assoc :null? true)
@@ -210,15 +215,14 @@
 
 (defn- add-members [data k env syms]
   (cond-> data
-    (seq syms)
-    (update k (fn [table]
-                (reduce (fn [table sym]
-                          (let [data (extract-symbol env sym)]
-                            (table/tassoc table (:name data) data)))
-                        table
-                        syms)))))
+    (seq syms) (update k (fn [table]
+                           (reduce (fn [table sym]
+                                     (let [data (extract-symbol env sym)]
+                                       (table/tassoc table (:name data) data)))
+                                   table
+                                   syms)))))
 
-(defn- add-type-members [data env type]
+(defn- add-type-properties [data env type]
   (let [checker (:type-checker env)
         syms    (type-checker/properties-of-type checker type)]
     (add-members data :members env syms)))
@@ -238,18 +242,20 @@
     (cond-> {:params      (map #(extract-parameter env %) (signature/parameters sig))
              :return-type (extract-type env return-type)})))
 
-(defn- extract-signatures
-  ([env type]
-   (extract-signatures env type signature-kind/call))
-  ([env type kind]
-   (let [checker (:type-checker env)]
-     (for [sig (type-checker/signatures-of-type checker type kind)]
-       (extract-signature env sig)))))
+(defn- extract-signatures [env type kind]
+  (let [checker (:type-checker env)]
+    (for [sig (type-checker/signatures-of-type checker type kind)]
+      (extract-signature env sig))))
 
-(defn- add-signatures [data env type]
-  (let [signatures (extract-signatures env type)]
+(defn- add-call-signatures [data env type]
+  (let [signatures (extract-signatures env type signature-kind/call)]
     (cond-> data
       (seq signatures) (update :signatures (fnil into []) signatures))))
+
+(defn- add-construct-signatures [data env type]
+  (let [signatures (extract-signatures env type signature-kind/construct)]
+    (cond-> data
+      (seq signatures) (update :construct-signatures (fnil into []) signatures))))
 
 (defn- extract-property [data env sym]
   (-> data
@@ -263,7 +269,7 @@
         type    (type-checker/type-of-symbol checker sym)]
     (-> data
         (update :traits conj :method)
-        (add-signatures env type))))
+        (add-call-signatures env type))))
 
 (defn- extract-get-accessor [data _env _sym]
   (update data :traits conj :get-accessor))
@@ -281,8 +287,7 @@
         type    (type-checker/type-of-symbol checker sym)]
     (-> data
         (update :traits conj :function)
-        ;; TODO: JavaScript style construct signatures?
-        (add-signatures env type))))
+        (add-call-signatures env type))))
 
 (defn- extract-class-or-interface
   [trait data env sym]
@@ -290,15 +295,16 @@
         type    (type-checker/declared-type-of-symbol checker sym)]
     (-> data
         (update :traits conj trait)
-        (add-type-members env type)
-        (add-signatures env type))))
+        (add-type-properties env type)
+        (add-call-signatures env type))))
 
 (defn- extract-class [data env sym]
-  (let [table (symbol/exports sym)]
+  (let [checker (:type-checker env)
+        type    (type-checker/type-of-symbol checker sym)]
     (-> (extract-class-or-interface :class data env sym)
-        ;; TODO: Add construct signatures
+        (add-construct-signatures env type)
         ;; Static members
-        (add-members :exports env (.values ^js table)))))
+        (add-members :exports env (es6-iterator-seq (.values (symbol/exports sym)))))))
 
 (defn- extract-interface [data env sym]
   (extract-class-or-interface :interface data env sym))
@@ -313,7 +319,7 @@
         type    (type-checker/type-of-symbol checker sym)]
     (-> data
         (update :traits conj :enum)
-        (add-type-members env type))))
+        (add-type-properties env type))))
 
 (defn- extract-type-alias [data env sym]
   (let [checker (:type-checker env)]
