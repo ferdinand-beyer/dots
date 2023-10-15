@@ -1,4 +1,4 @@
-{:deps {:aliases [:shadow]}
+{:deps {:aliases [:dev :shadow]}
  :builds
  {:dots
   {:target :node-script

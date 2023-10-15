@@ -10,6 +10,7 @@
   },
   "scripts": {
     "start": "shadow-cljs start",
-    "stop": "shadow-cljs stop"
+    "stop": "shadow-cljs stop",
+    "watch": "shadow-cljs watch dots"
   }
 }

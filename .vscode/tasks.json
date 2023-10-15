@@ -1,0 +1,71 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Dots Watch",
+            "type": "npm",
+            "script": "watch",
+            "isBackground": true,
+            "problemMatcher": {
+                "owner": "clojure",
+                "fileLocation": "absolute",
+                "pattern": [
+                    {
+                        "regexp": "^------ (WARNING|ERROR).*$",
+                        "severity": 1,
+                        "message": 1
+                    },
+                    {
+                        "regexp": "^File: ([^:]+):(\\d+):(\\d+)$",
+                        "file": 1,
+                        "line": 2,
+                        "column": 3,
+                    },
+                ],
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^\\[.*\\] Compiling \\.{3}$",
+                    "endsPattern": "^\\[.*\\] Build (completed|failure).*$",
+                }
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "presentation": {
+                "panel": "dedicated",
+                "group": "dots"
+            }
+        },
+        {
+            "label": "Dots REPL",
+            "type": "shell",
+            "command": "node",
+            "args": [
+                "dist/dots.js",
+                "--repl"
+            ],
+            "isBackground": true,
+            "group": {
+                "kind": "build",
+                "isDefault": false,
+            },
+            "presentation": {
+                "panel": "dedicated",
+                "group": "dots"
+            }
+        },
+        {
+            "label": "Dots Dev",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "Dots Watch",
+                "Dots REPL"
+            ]
+        }
+    ]
+}
