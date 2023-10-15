@@ -41,6 +41,12 @@
 (defn symbol ^"Symbol | undefined" [^Type type]
   (.getSymbol type))
 
+(defn alias-symbol ^"Symbol | undefined" [^Type type]
+  (.-aliasSymbol type))
+
+(defn alias-type-arguments ^"Type[] | undefined" [^Type type]
+  (.-aliasTypeArguments type))
+
 (defn properties ^"Symbol[]" [^Type type]
   (.getProperties type))
 
@@ -181,6 +187,25 @@
 (defn this-type
   ^"TypeParameter | undefined" [^InterfaceType type]
   (.-thisType type))
+
+;; /**
+;;  * Type references (ObjectFlags.Reference). When a class or interface has type parameters or
+;;  * a "this" type, references to the class or interface are made using type references. The
+;;  * typeArguments property specifies the types to substitute for the type parameters of the
+;;  * class or interface and optionally includes an extra element that specifies the type to
+;;  * substitute for "this" in the resulting instantiation. When no extra argument is present,
+;;  * the type reference itself is substituted for "this". The typeArguments property is undefined
+;;  * if the class or interface has no type parameters and the reference isn't specifying an
+;;  * explicit "this" argument.
+;;  */
+;; export interface TypeReference extends ObjectType {
+;;     target: GenericType;
+;;     node?: TypeReferenceNode | ArrayTypeNode | TupleTypeNode;
+;; }
+
+(defn target
+  ^GenericType [^TypeReference type]
+  (.-target type))
 
 ;;interface IndexType extends InstantiableType {
 ;;    type: InstantiableType | UnionOrIntersectionType;

@@ -182,6 +182,10 @@
   ^"Symbol | undefined" [^TypeChecker type-checker ^Node node]
   (.getSymbolAtLocation type-checker node))
 
+(defn type-arguments
+  ^"readonly Type[]" [^TypeChecker type-checker ^TypeReference type]
+  (.getTypeArguments type-checker type))
+
 (defn export-symbol-of-symbol
   "If a symbol is a local symbol with an associated exported symbol, returns the exported symbol.
    Otherwise returns its input.
@@ -242,3 +246,10 @@
 (defn optional-parameter?
   [^TypeChecker type-checker ^ParameterDeclaration node]
   (.isOptionalParameter type-checker node))
+
+(defn array-type?
+  "True if this type is the `Array` or `ReadonlyArray` type from lib.d.ts.
+   This function will _not_ return true if passed a type which
+   extends `Array` (for example, the TypeScript AST's `NodeArray` type)."
+  [^TypeChecker type-checker ^Type type]
+  (.isArrayType type-checker type))

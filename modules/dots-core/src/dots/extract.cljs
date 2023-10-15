@@ -6,6 +6,7 @@
             [dots.typescript.import-clause :as import-clause]
             [dots.typescript.import-declaration :as import-declaration]
             [dots.typescript.namespace-import :as namespace-import]
+            [dots.typescript.object-flags :as object-flags]
             [dots.typescript.program :as program]
             [dots.typescript.script-kind :as script-kind]
             [dots.typescript.signature :as signature]
@@ -99,42 +100,103 @@
          (type-checker/symbol-at-location checker)
          (type-checker/aliased-symbol checker))))
 
-;; FLAGS
-
 (defn- has? [flags test]
   (not= 0 (bit-and flags test)))
 
-;; TYPE
+;;-------------------------------------------------------------------------------------------------
+;; Type
 
-(defn- debug-type [{:keys [type-checker]} type]
-  (let [sym (type/symbol type)
-        fqn (some->> (type/symbol type)
-                     (type-checker/fully-qualified-name type-checker))]
-    (cond-> {:str   (type-checker/type-to-string type-checker type)
-             :flags (type/flags type)
-             :symbol (when sym
-                       {:name (symbol/name sym)
-                        :flags (symbol/flags sym)})}
-      (some? fqn) (assoc :fqn fqn)
-      (type/literal? type) (assoc :value (type/value type))
-      (type/class-or-interface? type) (assoc :object-flags (type/object-flags type)))))
+(declare extract-type)
 
-(defn- extract-type [env type]
+(defn- fqn [env sym]
+  (-> (:type-checker env)
+      (type-checker/fully-qualified-name sym)
+      (names/split-fqn)))
+
+(defn- extract-type-reference [props env type]
+  (let [target  (type/target type)]
+    (if (identical? type target)
+      props
+      (let [checker (:type-checker env)
+            args    (type-checker/type-arguments checker type)]
+        (cond-> (assoc props :reference (extract-type env target))
+          (seq args) (assoc :args (mapv #(extract-type env %) args)))))))
+
+;; TODO: Unify with extract-class-or-interface?
+(defn- extract-class-or-interface-type [props env type]
+  (let [sym (type/symbol type)]
+    (-> props
+        (assoc :class-or-interface? true)
+        (assoc (if (type/class? type) :class? :interface?) true)
+        (cond->
+         sym      (assoc :fqn (fqn env sym))
+         *debug?* (assoc :debug/object-flags (type/object-flags type))))))
+
+(defn- extract-object-type [props env type]
+  (let [flags (type/object-flags type)]
+    (-> props
+        (assoc :object? true)
+        (cond->
+         (type/class-or-interface? type) (extract-class-or-interface-type env type)
+         (has? flags object-flags/reference) (extract-type-reference env type)
+         (type-checker/array-type? (:type-checker env) type) (assoc :array? true)))))
+
+(def ^:private type-flag-keys
+  [:any? :string? :number? :boolean? :enum? :void? :undefined? :null? :object? :array?])
+
+(defn- merge-union-type [props types]
+  (apply merge props (map #(select-keys % type-flag-keys) types)))
+
+;; TODO: Enums will also be unions of their literal types...
+;; type-flags/enum-literal
+(defn- extract-union-or-intersection-type [props env type]
+  (let [component-types (mapv #(extract-type env %) (type/types type))]
+    (if (type/union? type)
+      (-> props
+          (merge-union-type component-types)
+          (assoc :union component-types))
+      (assoc props :intersection component-types))))
+
+(defn- extract-type* [env type]
   (let [checker (:type-checker env)
         flags   (type/flags type)]
     (cond-> {:str (type-checker/type-to-string checker type)}
+      ;; TypeScript AST viewer reports that there is a Primitive flag, but the d.ts does not contain it?
+      ;; Some of these flags are mutually exclusive and could be checked using a mask and =?
       (has? flags type-flags/any) (assoc :any? true)
-      (has? flags type-flags/string) (assoc :primitive :string)
-      (has? flags type-flags/number) (assoc :primitive :number)
-      (has? flags type-flags/boolean) (assoc :primitive :boolean)
-      (has? flags type-flags/undefined) (assoc :primitive :undefined)
+      (has? flags type-flags/string) (assoc :primitive :string, :string? true)
+      (has? flags type-flags/number) (assoc :primitive :number, :number? true)
+      (has? flags type-flags/boolean) (assoc :primitive :boolean, :boolean? true)
+      (has? flags type-flags/enum) (assoc :enum? true)
+      (has? flags type-flags/enum) (assoc :primitive :void, :void? true)
+      (has? flags type-flags/undefined) (assoc :primitive :undefined, :undefined? true)
+      (has? flags type-flags/null) (assoc :null? true)
+      (has? flags type-flags/object) (extract-object-type env type)
+      (type/literal? type) (assoc :literal (type/value type))
+      (type/union-or-intersection? type) (extract-union-or-intersection-type env type)
       *debug?* (assoc :debug/type-flags flags))))
+
+(defn- extract-type [env type]
+  (let [cache (:types* env)]
+    (if-let [data (get @cache type)]
+      (if (keyword-identical? ::pending data)
+        (let [sym (type/symbol type)]
+          (cond-> {:circular? true
+                   :str (type-checker/type-to-string (:type-checker env) type)}
+            sym (assoc :fqn (fqn env sym))))
+        data)
+      (do
+        (swap! cache assoc type ::pending)
+        (let [data (extract-type* env type)]
+          (swap! cache assoc type data)
+          data)))))
 
 (defn- extract-symbol-type [env sym]
   (let [checker (:type-checker env)]
     (extract-type env (type-checker/type-of-symbol checker sym))))
 
-;; SYMBOL
+;;-------------------------------------------------------------------------------------------------
+;; Symbol
 
 (defn- doc-string [sym]
   (let [parts (symbol/documentation-comment sym)]
@@ -157,19 +219,6 @@
   (let [checker (:type-checker env)
         syms    (type-checker/properties-of-type checker type)]
     (add-members data :members env syms)))
-
-;; TODO: Represent types as Clojure data (hiccup)?
-;; At least understand some basics:
-;; - primitives (type flags)
-;; - nullable types - same as (X | undefined)?
-;; - union types (A | B) - "either or"
-;; - intersection types (A & B) - "all of"
-;; - references to types defined here
-;;   (class, interface, type alias, alias (?))
-(defn- debug-types [{:keys [type-checker] :as env} sym]
-  (-> {:type          (type-checker/type-of-symbol type-checker sym)
-       :declared-type (type-checker/declared-type-of-symbol type-checker sym)}
-      (update-vals #(extract-type env %))))
 
 (defn- extract-parameter [env sym]
   (let [checker (:type-checker env)
@@ -195,7 +244,9 @@
        (extract-signature env sig)))))
 
 (defn- add-signatures [data env type]
-  (update data :signatures into (extract-signatures env type)))
+  (let [signatures (extract-signatures env type)]
+    (cond-> data
+      (seq signatures) (update :signatures (fnil into []) signatures))))
 
 (defn- extract-property [data env sym]
   (-> data
@@ -227,6 +278,7 @@
         type    (type-checker/type-of-symbol checker sym)]
     (-> data
         (update :traits conj :function)
+        ;; TODO: JavaScript style construct signatures?
         (add-signatures env type))))
 
 (defn- extract-class-or-interface
@@ -241,14 +293,17 @@
 (defn- extract-class [data env sym]
   (let [table (symbol/exports sym)]
     (-> (extract-class-or-interface :class data env sym)
+        ;; TODO: Add construct signatures
         ;; Static members
         (add-members :exports env (.values ^js table)))))
 
 (defn- extract-interface [data env sym]
   (extract-class-or-interface :interface data env sym))
 
-(defn- extract-enum-member [data _env _sym]
-  (update data :traits conj :enum-member))
+(defn- extract-enum-member [data env sym]
+  (-> data
+      (update :traits conj :enum-member)
+      (assoc :type (extract-symbol-type env sym))))
 
 (defn- extract-enum [data env sym]
   (let [checker (:type-checker env)
@@ -257,8 +312,10 @@
         (update :traits conj :enum)
         (add-type-members env type))))
 
-(defn- extract-type-alias [data _env _sym]
-  (update data :traits conj :type-alias))
+(defn- extract-type-alias [data env sym]
+  (let [checker (:type-checker env)]
+    (merge (extract-type env (type-checker/declared-type-of-symbol checker sym))
+           (update data :traits conj :type-alias))))
 
 (defn- extract-alias [data _env _sym]
   (update data :traits conj :alias))
@@ -275,15 +332,11 @@
         doc-str  (doc-string sym)
         sym-name (symbol/name sym)]
     (cond-> {:name   (type-checker/symbol-to-string checker sym)
-             :traits #{}
-             ;; TODO: Only for types, so that we can reference them?
-             ;; TODO: Register in the environment? Allow to resolve types
-             :fqn    (type-checker/fully-qualified-name checker sym)}
+             :traits #{}}
       (names/internal? sym-name) (assoc :internal? true)
       doc-str  (assoc :doc doc-str)
       *debug?* (assoc :debug/name  sym-name
-                      :debug/flags (symbol/flags sym)
-                      :debug/types (debug-types env sym)))))
+                      :debug/flags (symbol/flags sym)))))
 
 (defn- amend-symbol [data env sym]
   (let [flags (symbol/flags sym)]
@@ -309,7 +362,8 @@
 (defn extract [module-name opts]
   (let [program (create-program module-name opts)
         symbol  (imported-module-symbol program)
-        env     {:type-checker (program/get-type-checker program)}]
+        env     {:type-checker (program/get-type-checker program)
+                 :types*       (atom {})}]
     ;; TODO: The imported symbol is a variable => extract its type
     ;; For example, the "path" module exports the `PlatformPath`
     ;; interface

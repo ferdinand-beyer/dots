@@ -20,3 +20,6 @@
       (cond->
        (str/starts-with? n "_") (->> (str "-"))
        (str/ends-with? n "_") (str "*"))))
+
+(defn split-fqn [fqn]
+  (vec (re-seq #"\"[^\"]+\"|\w+" fqn)))

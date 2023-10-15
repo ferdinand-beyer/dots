@@ -60,7 +60,6 @@
   (def ts (extract/extract "typescript" {}))
 
   (def path (extract/extract "path" {}))
-  (def path-ns (adapt/adapt path nil))
 
   (run! prn (sort (keys (:exports vscode))))
   (get-in vscode [:exports "Event"])
@@ -82,11 +81,6 @@
   (get namespaces "vscode.authentication")
 
   (emit/emit-project namespaces {:output-dir "dist/dots-vscode"})
-
-  (tap> vscode)
-  (tap> namespaces)
-  (tap> ts)
-  (tap> (adapt/adapt ts nil))
 
   ;;
   )
