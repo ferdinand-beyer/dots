@@ -195,7 +195,8 @@
   ;; - docstring
   ;; - :refer-clojure :exclude var names
   ;; - :requires
-  (let [excludes (filter names/core-name? (keys vars))]
+  (let [excludes (filter names/cljs-core-name? (keys vars))]
+    ;; TODO: Ensure that we don't exclude `def` or `defn`, or qualify accordingly!
     (-> coll
         (conj "(ns " (str/join "." ns-path))
         (cond->
