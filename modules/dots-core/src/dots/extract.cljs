@@ -257,6 +257,13 @@
     (cond-> data
       (seq signatures) (update :construct-signatures (fnil into []) signatures))))
 
+;; TODO: Find out if properties and variables are readonly.
+;; The TypeChecker has a `isReadonlySymbol` function but unfortunately, it is private.
+;; We might be able to walk the AST to find:
+;; - Readonly modifier (getCombinedModifierFlags)
+;; - Const keyword (a bit trickier, because this is outside of the valueDeclaration)
+;; We should generate setters for non-readonly properties.  We can handle get-accessors
+;; and set-accessors in classes similar to properties in interfaces.
 (defn- extract-property [data env sym]
   (-> data
       (update :traits conj :property)
