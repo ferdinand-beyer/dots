@@ -5,11 +5,9 @@
             [dots.typescript :as ts]
             [dots.typescript.import-clause :as import-clause]
             [dots.typescript.import-declaration :as import-declaration]
-            [dots.typescript.module-kind :as module-kind]
             [dots.typescript.namespace-import :as namespace-import]
             [dots.typescript.program :as program]
             [dots.typescript.script-kind :as script-kind]
-            [dots.typescript.script-target :as script-target]
             [dots.typescript.signature :as signature]
             [dots.typescript.signature-kind :as signature-kind]
             [dots.typescript.source-file :as source-file]
@@ -28,9 +26,28 @@
 (defn- proxy-file-name? [file-name]
   (= file-name proxy-file-name))
 
+;; import defaultExport, * as name from "module-name";
+;; [
+;;   factory.createImportDeclaration(
+;;     undefined,
+;;     factory.createImportClause(
+;;       false,
+;;       factory.createIdentifier("defaultExport"),
+;;       factory.createNamespaceImport(
+;;         factory.createIdentifier("name")
+;;       )
+;;     ),
+;;     factory.createStringLiteral("module-name"),
+;;     undefined
+;;   )
+;; ];
+
 (defn- proxy-source-text
   "Creates source code for a proxy TypeScript source file."
   [module-name {:keys [default?]}]
+  ;; Should we support the default export?
+  ;; ts:   import defaultExport, * as name from "module-name";
+  ;; cljs: (:require ["module-name" :as name] ["module-name$default" :as defaultExport])
   (str/join (list "import "
                   (if default? "" "* as ")
                   "dots$imported from \""
@@ -59,9 +76,7 @@
            #js {}
            (ts/default-compiler-options)
            #js {:allowJs true
-                :strict true
-                :module module-kind/es-2015
-                :target script-target/es-next}))
+                :strict  true}))
 
 (defn- create-program
   [module-name opts]
@@ -256,8 +271,8 @@
         (add-members :exports env syms))))
 
 (defn- symbol-common [env sym]
-  (let [checker (:type-checker env)
-        doc-str (doc-string sym)
+  (let [checker  (:type-checker env)
+        doc-str  (doc-string sym)
         sym-name (symbol/name sym)]
     (cond-> {:name   (type-checker/symbol-to-string checker sym)
              :traits #{}
@@ -299,9 +314,4 @@
     ;; For example, the "path" module exports the `PlatformPath`
     ;; interface
     (-> (extract-symbol env symbol)
-        ;; TODO Hack to set requires correctly
-        ;; We should keep track of how we imported the module,
-        ;; to emit correct :require code.  However, we should
-        ;; not change module names, because we could use them to
-        ;; resolve fully-qualified names
-        (assoc :name (str "\"" module-name "\"")))))
+        (assoc :import-name module-name))))

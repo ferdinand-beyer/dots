@@ -10,8 +10,10 @@
    :symbol-path []
    :ns-path     []})
 
-(defn- update-ns-path [ctx f]
-  (let [ns-path (f (:ns-path ctx))
+(defn- update-ns-path [{:keys [ns-path root-ns-path] :as ctx} f]
+  (let [ns-path (if (and (empty? ns-path) root-ns-path)
+                  root-ns-path
+                  (f ns-path))
         ns-key  (when (seq ns-path)
                   (str/join "." (map name ns-path)))]
     (assoc ctx :ns-path ns-path :ns-key ns-key)))
@@ -143,8 +145,8 @@
             (:traits node))))
 
 (defmethod adapt-trait :default
-  [ctx trait _node]
-  (println "Warning: No adapt-trait implementation for" trait)
+  [ctx trait node]
+  (println "Warning: No adapt-trait implementation for" trait (:name node))
   ctx)
 
 (defmethod adapt-trait :module
@@ -157,25 +159,26 @@
 (defmethod adapt-trait :variable
   [ctx _ {:keys [name] :as node}]
   (let [var-name        (names/cljs-name name)
-        [module & path] (:symbol-path ctx)]
+        [_module & path] (:symbol-path ctx)]
+    ;; TODO: If the variable's type is a class/interface, generate "bound" functions
     ;; TODO: If the type is callable, add arities to call?
     (-> ctx
         (add-var var-name (select-keys node [:doc]))
         ;; TODO: Add :init expr for consts?
         (add-arity var-name 0 {:op          :global-get
-                               :module-name module
+                               :module-name (:module-name ctx)
                                :path        (conj (vec path) name)}))))
 
 (defmethod adapt-trait :function
   [ctx _ {:keys [name signatures] :as node}]
   (let [var-name (names/cljs-name name)
-        [module & path] (:symbol-path ctx)
+        [_module & path] (:symbol-path ctx)
         path     (conj (vec path) name)
         ctx      (add-var ctx var-name (select-keys node [:doc]))]
     (add-signatures ctx var-name signatures
                     (fn [args]
                       {:op          :global-call
-                       :module-name module
+                       :module-name (:module-name ctx)
                        :path        path
                        :args        args}))))
 
@@ -206,11 +209,11 @@
 (defmethod adapt-trait :enum-member
   [ctx _ {:keys [name] :as node}]
   (let [var-name        (names/cljs-name name)
-        [module & path] (:symbol-path ctx)]
+        [_module & path] (:symbol-path ctx)]
     (-> ctx
         (add-var var-name (select-keys node [:doc]))
         (add-init var-name {:op          :global-get
-                            :module-name module
+                            :module-name (:module-name ctx)
                             :path        (conj (vec path) name)}))))
 
 ;; TODO: For class/interface members, check if the name is a valid identifier,
@@ -241,9 +244,18 @@
                        :path path
                        :args (into [type-name] args)}))))
 
-(defn adapt [module _opts]
-  ;; TODO: Support ns-prefix, e.g. "dots"
-  ;; And/or a function: symbol-path => ns-path
-  (-> empty-ctx
-      (adapt* module)
-      :namespaces))
+(defn- default-root-ns-path [import-name]
+  (->> (str/split import-name "/")
+       (map names/cljs-name)
+       (into ["dots"])))
+
+(defn adapt [module opts]
+  (let [{:keys [import-name]} module
+        {:keys [namespace]}   opts]
+    (-> empty-ctx
+        (assoc :module-name import-name
+               :root-ns-path (if namespace
+                               (str/split namespace #"\.")
+                               (default-root-ns-path import-name)))
+        (adapt* module)
+        :namespaces)))

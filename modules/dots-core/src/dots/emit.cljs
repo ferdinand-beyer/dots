@@ -76,8 +76,12 @@
       (conj ")")))
 
 (defn- module-path [{:keys [module-name path]} ns-data]
-  (let [alias (get-in ns-data [:requires module-name] "ALIAS-MISSING")]
-    (cons (str alias "/" (first path)) (next path))))
+  (if-let [alias (get-in ns-data [:requires module-name])]
+    (cons (str alias "/" (first path)) (next path))
+    (throw (ex-info (str "Missing require for module" module-name)
+                    {:type ::missing-require
+                     :module-name module-name
+                     :ns-data ns-data}))))
 
 (defmulti ^:private emit-expr
   {:arglists '([coll expr args ns-data])}
@@ -202,7 +206,7 @@
                               "])")
          (seq requires) (-> (conj "\n  (:require")
                             (into (mapcat (fn [[module alias]]
-                                            (list " [" module " :as " alias "]")))
+                                            (list " [\"" module "\" :as " alias "]")))
                                   requires)
                             (into ")")))
         (conj ")\n"))))

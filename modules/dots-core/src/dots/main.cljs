@@ -6,7 +6,8 @@
 
 (def cli-opts
   (cond-> [["-h" "--help" "Show help"]
-           ["-o" "--output-dir" "Output directory"
+           ["-n" "--namespace NS" "Target namespace"]
+           ["-o" "--output-dir DIR" "Output directory"
             :default "target/dots"]]
     goog/DEBUG (conj ["-r" "--repl" "REPL mode: don't exit"])))
 
@@ -35,8 +36,7 @@
     (exit 0)))
 
 (defn ^:export main [& args]
-  (let [{:keys [options arguments errors summary]}
-        (parse-opts args cli-opts)]
+  (let [{:keys [options arguments errors summary]} (parse-opts args cli-opts)]
     (cond
       (:help options) (usage summary)
       (:repl options) (println "REPL mode")
@@ -82,6 +82,11 @@
   (get namespaces "vscode.authentication")
 
   (emit/emit-project namespaces {:output-dir "dist/dots-vscode"})
+
+  (tap> vscode)
+  (tap> namespaces)
+  (tap> ts)
+  (tap> (adapt/adapt ts nil))
 
   ;;
   )
