@@ -19,6 +19,11 @@
 (defn- reduce-into [to f from]
   (reduce f to from))
 
+(defn- emit-core-symbol [coll symbol ns-data]
+  (if (contains? (:vars ns-data) symbol)
+    (conj coll "cljs.core/" symbol)
+    (conj coll symbol)))
+
 (defn- emit-doc-string
   ([coll doc]
    (emit-doc-string coll doc "  "))
@@ -40,9 +45,11 @@
         (into (mapcat #(list " -" %)) (next path))
         (conj ")"))))
 
-(defn- emit-set [coll path expr]
+(defn- emit-set [coll path expr ns-data]
   (-> coll
-      (conj "(set! ")
+      (conj "(")
+      (emit-core-symbol "set!" ns-data)
+      (conj " ")
       (emit-get path)
       (conj " " expr ")")))
 
@@ -71,28 +78,32 @@
 (defn- emit-call [coll path args]
   (emit-call* coll path #(emit-args % args)))
 
-(defn- emit-apply-args [coll path args rest-arg]
+(defn- emit-apply-args [coll path args rest-arg ns-data]
   (-> coll
       (conj " ")
       (as-> % (let [this-path (butlast path)]
                 (if (seq this-path)
                   (emit-get % this-path)
                   (conj % "nil"))))
-      (conj " (to-array ")
+      (conj " (")
+      (emit-core-symbol "to-array" ns-data)
+      (conj " ")
       (as-> % (if (seq args)
                 (-> %
-                    (conj "(" (if (next args) "list*" "cons"))
+                    (conj "(")
+                    (emit-core-symbol (if (next args) "list*" "cons") ns-data)
                     (emit-args args)
                     (conj " " rest-arg ")"))
                 (conj % rest-arg)))
       (conj ")")))
 
-(defn- emit-apply [coll path args rest-arg]
-  (emit-call* coll (concat path (list "apply")) #(emit-apply-args % path args rest-arg)))
+(defn- emit-apply [coll path args rest-arg ns-data]
+  (emit-call* coll (concat path (list "apply"))
+              #(emit-apply-args % path args rest-arg ns-data)))
 
-(defn- emit-call-or-apply [coll path args rest-arg]
+(defn- emit-call-or-apply [coll path args rest-arg ns-data]
   (if rest-arg
-    (emit-apply coll path args rest-arg)
+    (emit-apply coll path args rest-arg ns-data)
     (emit-call coll path args)))
 
 ;; TODO: Support var-args variant, maybe using (.construct js/Reflect ctor args)
@@ -111,6 +122,9 @@
                      :module-name module-name
                      :ns-data ns-data}))))
 
+(defn- this-arg [args]
+  (str "^js " (first args)))
+
 (defmulti ^:private emit-expr
   {:arglists '([coll expr ns-data])}
   (fn [_ expr _]
@@ -122,11 +136,11 @@
 
 (defmethod emit-expr :global-set
   [coll {:keys [args] :as expr} ns-data]
-  (emit-set coll (module-path expr ns-data) (first args)))
+  (emit-set coll (module-path expr ns-data) (first args) ns-data))
 
 (defmethod emit-expr :global-call
   [coll {:keys [args rest-arg] :as expr} ns-data]
-  (emit-call-or-apply coll (module-path expr ns-data) args rest-arg))
+  (emit-call-or-apply coll (module-path expr ns-data) args rest-arg ns-data))
 
 (defmethod emit-expr :global-construct
   [coll {:keys [args] :as expr} ns-data]
@@ -134,21 +148,21 @@
 
 (defmethod emit-expr :arg-get
   [coll {:keys [path args]} _]
-  (emit-get coll (cons (first args) path)))
+  (emit-get coll (cons (this-arg args) path)))
 
 (defmethod emit-expr :arg-set
-  [coll {:keys [path args]} _]
-  (emit-set coll (cons (first args) path) (second args)))
+  [coll {:keys [path args]} ns-data]
+  (emit-set coll (cons (this-arg args) path) (second args) ns-data))
 
 (defmethod emit-expr :arg-call
-  [coll {:keys [path args rest-arg]} _]
-  (emit-call-or-apply coll (cons (first args) path) (next args) rest-arg))
+  [coll {:keys [path args rest-arg]} ns-data]
+  (emit-call-or-apply coll (cons (this-arg args) path) (next args) rest-arg ns-data))
 
 (defn- emit-arity-expr [coll indent exprs ns-data]
   (let [{:keys [args rest-arg] :as expr} (first exprs)
         args (cond-> args rest-arg (concat (list "&" rest-arg)))]
     (-> coll
-        (conj "[" (str/join " " args) "]\n" indent)
+        (conj "^js [" (str/join " " args) "]\n" indent)
         (emit-expr expr ns-data))))
 
 #_(defn- emit-arglists [coll arities]
@@ -180,11 +194,6 @@
                     (interpose (list "\n"))
                     cat)
               (sort-by key arities)))))
-
-(defn- emit-core-symbol [coll symbol ns-data]
-  (if (contains? (:vars ns-data) symbol)
-    (conj coll "cljs.core" symbol)
-    (conj coll symbol)))
 
 (defn- emit-defn
   [coll {:keys [var-name doc arities]} ns-data]
@@ -219,26 +228,21 @@
       (emit-def coll var-data ns-data)
       (emit-defn coll var-data ns-data))))
 
-(defn- emit-ns-form [coll {:keys [ns-path doc vars requires]}]
-  ;; - docstring
-  ;; - :refer-clojure :exclude var names
-  ;; - :requires
-  (let [excludes (filter names/cljs-core-name? (keys vars))]
-    ;; TODO: Ensure that we don't exclude `def` or `defn`, or qualify accordingly!
-    (-> coll
-        (conj "(ns " (str/join "." ns-path))
-        (cond->
-         (seq doc) (-> (conj "\n")
-                       (emit-doc-string doc))
-         (seq excludes) (conj "\n  (:refer-clojure :exclude ["
-                              (str/join " " excludes)
-                              "])")
-         (seq requires) (-> (conj "\n  (:require")
-                            (into (mapcat (fn [[module alias]]
-                                            (list " [\"" module "\" :as " alias "]")))
-                                  requires)
-                            (into ")")))
-        (conj ")\n"))))
+(defn- emit-ns-form [coll {:keys [ns-path doc requires excludes]}]
+  (-> coll
+      (conj "(ns " (str/join "." ns-path))
+      (cond->
+       (seq doc) (-> (conj "\n")
+                     (emit-doc-string doc))
+       (seq excludes) (conj "\n  (:refer-clojure :exclude ["
+                            (str/join " " (sort excludes))
+                            "])")
+       (seq requires) (-> (conj "\n  (:require")
+                          (into (mapcat (fn [[module alias]]
+                                          (list " [\"" module "\" :as " alias "]")))
+                                (sort-by first requires))
+                          (into ")")))
+      (conj ")\n")))
 
 (defn- namespace-munge [ns]
   (str/replace (str ns) \- \_))
@@ -260,11 +264,18 @@
       (seq module-names) (assoc :requires (zipmap module-names
                                                   (map names/cljs-name module-names))))))
 
+(defn- collect-excludes [ns-data]
+  (let [excludes (filter names/cljs-core-name? (keys (:vars ns-data)))]
+    (cond-> ns-data
+      (seq excludes) (assoc :excludes (set excludes)))))
+
 (defn- emit-namespace
   [out-dir {:keys [ns-path vars] :as ns-data}]
   (when (seq vars)
     (let [file-path (ns-filepath out-dir ns-path)
-          ns-data   (collect-requires ns-data)]
+          ns-data   (-> ns-data
+                        (collect-requires)
+                        (collect-excludes))]
       (fs/mkdir-sync (path/dirname file-path) #js {:recursive true})
       (io/with-open [writer (io/file-writer file-path)]
         (-> (writer-coll writer)
