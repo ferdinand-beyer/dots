@@ -59,6 +59,7 @@
 
 (defn- add-var [ctx var-name data]
   ;; TODO: Handle name conflicts (rename?)
+  ;; TODO: Rename reserved names such as `nil` (are there others?)
   (update-ns ctx
              update :vars
              table/tupdate var-name
@@ -81,43 +82,82 @@
                    (:path x) " and " (:path y))}))
 
 (defn- init-expr-conflict [var-data expr]
-  (if-let [existing (first (:init var-data))]
+  (if-let [existing (:init-expr var-data)]
     (expr-conflict existing expr)
     (cond
       (seq (:arities var-data))
       {:type ::init-arity-conflict
-       :message "Var :init and :arities are mutually exclusive"}
+       :message "Var :init-expr and :arities are mutually exclusive"}
       (not= :global-get (:op expr))
       {:type ::invalid-init-op
        :message "Only :global-get supported as var init expr"})))
 
 (defn- arity-expr-conflict [var-data arity expr]
-  (if (seq (:init var-data))
+  (if (:init-expr var-data)
     {:type ::init-arity-conflict
-     :message "Var :init and :arities are mutually exclusive"}
-    (when-let [existing (first (get-in var-data [:arities arity]))]
+     :message "Var :init-expr and :arities are mutually exclusive"}
+    (when-let [existing (get-in var-data [:arities arity :expr])]
       (expr-conflict existing expr))))
 
-(defn- expr-exception [ctx var-name expr conflict]
-  (ex-info (:message conflict)
-           {:type     (:type conflict)
-            :ns       (:ns-key ctx)
-            :var-name var-name
-            :expr     expr}))
+(defn- expr-exception
+  ([conflict]
+   (ex-info (:message conflict) conflict))
+  ([ctx var-name expr conflict]
+   (ex-info (str (:message conflict) " in " (:ns-key ctx) "/" var-name)
+            {:type     (:type conflict)
+             :ns       (:ns-key ctx)
+             :var-name var-name
+             :expr     expr})))
 
 (defn- add-init [ctx var-name expr]
   (update-ns ctx update-in [:vars var-name]
              (fn [var-data]
                (if-let [conflict (init-expr-conflict var-data expr)]
                  (throw (expr-exception ctx var-name expr conflict))
-                 (assoc var-data :init expr)))))
+                 (assoc var-data :init-expr expr)))))
 
-(defn- add-arity [ctx var-name arity expr]
-  (update-ns ctx update-in [:vars var-name]
-             (fn [var-data]
-               (if-let [conflict (arity-expr-conflict var-data arity expr)]
-                 (throw (expr-exception ctx var-name expr conflict))
-                 (update-in var-data [:arities arity] (fnil conj []) expr)))))
+(defn- add-arity-args [arity-data expr args variadic?]
+  (cond-> (if (some? arity-data)
+            (update arity-data :arglists conj args)
+            {:arglists #{args}
+             :expr expr})
+    variadic? (assoc :variadic? true)))
+
+(defn- add-this-arg [args ctx]
+  (let [type-name (last (:ns-path ctx))
+        this-arg  (if (some #(= type-name %) args)
+                    (str "this-" type-name)
+                    type-name)]
+    (into [this-arg] args)))
+
+(defn- add-arity
+  ([ctx var-name expr]
+   (add-arity ctx var-name expr []))
+  ([ctx var-name expr args]
+   (add-arity ctx var-name expr args nil))
+  ([ctx var-name expr args rest-arg]
+   {:pre [(vector? args)]}
+   (let [args  (cond-> args
+                 (#{:arg-get :arg-call} (:op expr)) (add-this-arg ctx)
+                 rest-arg (conj rest-arg))
+         arity (cond-> (count args) rest-arg dec)]
+     (update-ns ctx update-in [:vars var-name]
+                (fn [var-data]
+                  (if-let [conflict (arity-expr-conflict var-data arity expr)]
+                    (throw (expr-exception ctx var-name expr conflict))
+                    (update-in var-data [:arities arity] add-arity-args expr args rest-arg)))))))
+
+(defn- merge-arities [arities to from]
+  (let [to-data   (get arities to)
+        from-data (get arities from)]
+    (if-let [conflict (expr-conflict (:expr to-data) (:expr from-data))]
+      (throw (expr-exception conflict))
+      (let [merged (-> to-data
+                       (update :arglists into (:arglists from-data))
+                       (cond-> (:variadic? to-data) (assoc :variadic? true)))]
+        (-> arities
+            (assoc to merged)
+            (dissoc from))))))
 
 (defn- adapt-signature [{:keys [params]}]
   (let [params        (mapv (fn [param]
@@ -143,29 +183,24 @@
                               (conj (pop arities) (assoc (peek arities) :rest-arg (:name rest)))
                               arities)))
                         [(cond-> req-arity rest (assoc :rest-arg (:name rest)))])]
-    ;; TODO: Add return type information for doc-string
+    ;; TODO: Add return type information for doc-string and type hints
     (cond-> {:params  params-map
              :arities arities}
       rest (assoc :variadic rest))))
 
-;; !!! Typescript supports multiple variadic signatures, e.g.:
-;; showWarningMessage(message, options?, ...items)
-;; ClojureScript does not.  We can, however, omit longer signatures, and add arglists instead
-(defn- add-signature [ctx var-name signature expr-fn]
+(defn- add-signature [ctx var-name signature expr]
   (let [{:keys [_params arities]} (adapt-signature signature)]
     ;; TODO: Store info from params and return type in var-map
     ;; Also need to take "this" arg into account, when added by expr-fn
     ;; Probably need a second pass to construct a doc-string?
     (reduce (fn [ctx {:keys [args rest-arg]}]
-              (let [{:keys [args] :as expr} (expr-fn args rest-arg)
-                    expr (cond-> expr rest-arg (assoc :rest-arg rest-arg))]
-                (add-arity ctx var-name (count args) expr)))
+              (add-arity ctx var-name expr args rest-arg))
             ctx
             arities)))
 
-(defn- add-signatures [ctx var-name signatures expr-fn]
+(defn- add-signatures [ctx var-name signatures expr]
   (reduce (fn [ctx signature]
-            (add-signature ctx var-name signature expr-fn))
+            (add-signature ctx var-name signature expr))
           ctx
           signatures))
 
@@ -204,18 +239,17 @@
 (defmethod adapt-trait :variable
   [ctx _ {:keys [name type] :as node}]
   (let [var-name       (names/cljs-name name)
-        [_ & path]     (:symbol-path ctx)
         expr           {:module-name (get-in ctx [:module :import-name])
-                        :path        (vec path)}
+                        :path        (vec (next (:symbol-path ctx)))}
         interface-node (when (:object? type)
                          (some->> (:fqn type) (resolve-fqn ctx)))]
-    (if (seq path)
+    (if (:ns-key ctx)
       ;; Variable within a module
       (let [expr (update expr :path conj name)]
         (-> ctx
             (add-var var-name (select-keys node [:doc]))
-            ;; TODO: Add :init expr for consts, e.g. generate a `def` instead of `defn`?
-            (add-arity var-name 0 (assoc expr :op :global-get))
+            ;; TODO: Add :init-expr for consts, e.g. generate a `def` instead of `defn`?
+            (add-arity var-name (assoc expr :op :global-get))
             ;; TODO: If the type is callable, add arities to call?
             (cond->
              interface-node (adapt-variable-interface node expr interface-node))))
@@ -229,12 +263,9 @@
         [_module & path] (:symbol-path ctx)
         path     (conj (vec path) name)
         ctx      (add-var ctx var-name (select-keys node [:doc]))]
-    (add-signatures ctx var-name signatures
-                    (fn [args]
-                      {:op          :global-call
-                       :module-name (get-in ctx [:module :import-name])
-                       :path        path
-                       :args        args}))))
+    (add-signatures ctx var-name signatures {:op          :global-call
+                                             :module-name (get-in ctx [:module :import-name])
+                                             :path        path})))
 
 (defn- adapt-interface [ctx {:keys [name members] :as node}]
   (-> ctx
@@ -275,41 +306,53 @@
 ;; TODO: Clojurify names, e.g. '?' suffix for booleans, remove `is-` and `get-` prefixes
 ;; But then: Handle collisions, e.g. "name" and "getName" (maybe use `-name` for property access?)
 
-;; TODO: Rename "this" arg if another arg exists with the same name
-
 (defmethod adapt-trait :property
   [ctx _ {:keys [name] :as node}]
   ;; TODO: If the type is callable, add arities (e.g. VS-Code events)
-  (let [var-name  (names/cljs-name name)
-        ctx      (add-var ctx var-name (select-keys node [:doc]))
-        type-name (names/cljs-name (last (:symbol-path ctx)))]
+  (let [var-name (names/cljs-name name)
+        ctx      (add-var ctx var-name (select-keys node [:doc]))]
     (if-let [bind-expr (:bind-expr ctx)]
       (let [expr (-> bind-expr
                      (assoc :op :global-get)
                      (update :path conj name))]
-        (add-arity ctx var-name 0 expr))
-      (add-arity ctx var-name 1 {:op   :arg-get
-                                 :path [name]
-                                 :args [type-name]}))))
+        (add-arity ctx var-name expr))
+      (add-arity ctx var-name {:op   :arg-get
+                               :path [name]}))))
 
 (defmethod adapt-trait :method
   [ctx _ {:keys [name signatures] :as node}]
   (let [var-name (names/cljs-name name)
-        expr-fn  (if-let [bind-expr (:bind-expr ctx)]
-                   (let [expr (-> bind-expr
-                                  (assoc :op :global-call)
-                                  (update :path conj name))]
-                     (fn [args]
-                       (assoc expr :args args)))
-                   (let [type-name (names/cljs-name (last (:symbol-path ctx)))
-                         path      [name]]
-                     (fn [args]
-                       {:op   :arg-call
-                        :path path
-                        :args (into [type-name] args)})))]
+        expr     (if-let [bind-expr (:bind-expr ctx)]
+                   (-> bind-expr
+                       (assoc :op :global-call)
+                       (update :path conj name))
+                   {:op   :arg-call
+                    :path [name]})]
     (-> ctx
         (add-var var-name (select-keys node [:doc]))
-        (add-signatures var-name signatures expr-fn))))
+        (add-signatures var-name signatures expr))))
+
+(defn- unify-variadic-arities
+  "Merges variadic arities of all vars.
+
+   While TypeScript supports multiple variadic signatures for one function,
+   ClojureScript only supports one.  We therefore need to resolve this by
+   reducing all variadic arities into the shortest one."
+  [ctx]
+  (->> (for [[ns-key   {:keys [vars]}] (:namespaces ctx)
+             [var-name {:keys [arities]}] vars
+             :let [variadics (filter #(:variadic? (val %)) arities)]
+             :when (next variadics)]
+         (let [arity-keys (sort (keys variadics))
+               shortest   (first arity-keys)
+               arities    (reduce (fn [arities key]
+                                    (merge-arities arities shortest key))
+                                  arities
+                                  (next arity-keys))]
+           [ns-key var-name arities]))
+       (reduce (fn [ctx [ns-key var-name arities]]
+                 (assoc-in ctx [:namespaces ns-key :vars var-name :arities] arities))
+               ctx)))
 
 (defn- default-root-ns-path [import-name]
   (->> (str/split import-name "/")
@@ -325,4 +368,5 @@
                                (str/split namespace #"\.")
                                (default-root-ns-path import-name)))
         (adapt* module)
+        unify-variadic-arities
         :namespaces)))

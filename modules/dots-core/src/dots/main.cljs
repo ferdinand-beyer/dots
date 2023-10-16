@@ -61,26 +61,9 @@
 
   (def path (extract/extract "path" {}))
 
-  (tap> (get-in vscode [:exports "Position"]))
-
-  (run! prn (sort (keys (:exports vscode))))
-  (get-in vscode [:exports "Event"])
-  (get-in vscode [:exports "Command"])
-  (get-in vscode [:exports "authentication" :exports])
-  (get-in vscode [:exports "authentication"
-                  :exports "getSession"])
-  (get-in vscode [:exports "DataTransfer"])
-  (get-in vscode [:exports "Uri" :exports "joinPath"])
-
-  (get-in ts [:exports "TypeChecker"])
-
-  (get-in vscode [:exports "TextEditorSelectionChangeKind"])
-
   (def namespaces (adapt/adapt vscode {}))
-  (get namespaces "vscode")
-  (get namespaces "vscode.text-editor")
-  (get namespaces "vscode.text-editor-selection-change-kind")
-  (get namespaces "vscode.authentication")
+
+  (tap> (get namespaces "dots.vscode.notebook-data"))
 
   (emit/emit-project namespaces {:output-dir "dist/dots-vscode"})
 

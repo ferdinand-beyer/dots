@@ -126,74 +126,104 @@
   (str "^js " (first args)))
 
 (defmulti ^:private emit-expr
-  {:arglists '([coll expr ns-data])}
-  (fn [_ expr _]
+  {:arglists '([coll expr args rest-arg ns-data])}
+  (fn [_ expr _ _ _]
     (:op expr)))
 
 (defmethod emit-expr :global-get
-  [coll expr ns-data]
+  [coll expr _ _ ns-data]
   (emit-get coll (module-path expr ns-data)))
 
 (defmethod emit-expr :global-set
-  [coll {:keys [args] :as expr} ns-data]
+  [coll expr args _ ns-data]
   (emit-set coll (module-path expr ns-data) (first args) ns-data))
 
 (defmethod emit-expr :global-call
-  [coll {:keys [args rest-arg] :as expr} ns-data]
+  [coll expr args rest-arg ns-data]
   (emit-call-or-apply coll (module-path expr ns-data) args rest-arg ns-data))
 
 (defmethod emit-expr :global-construct
-  [coll {:keys [args] :as expr} ns-data]
+  [coll expr args _ ns-data]
   (emit-construct coll (module-path expr ns-data) args))
 
 (defmethod emit-expr :arg-get
-  [coll {:keys [path args]} _]
+  [coll {:keys [path]} args _ _]
   (emit-get coll (cons (this-arg args) path)))
 
 (defmethod emit-expr :arg-set
-  [coll {:keys [path args]} ns-data]
+  [coll {:keys [path]} args _ ns-data]
   (emit-set coll (cons (this-arg args) path) (second args) ns-data))
 
 (defmethod emit-expr :arg-call
-  [coll {:keys [path args rest-arg]} ns-data]
+  [coll {:keys [path]} args rest-arg ns-data]
   (emit-call-or-apply coll (cons (this-arg args) path) (next args) rest-arg ns-data))
 
-(defn- emit-arity-expr [coll indent exprs ns-data]
-  (let [{:keys [args rest-arg] :as expr} (first exprs)
-        args (cond-> args rest-arg (concat (list "&" rest-arg)))]
+(defn- make-args [n]
+  (into [] (map (if (<= n 26)
+                  #(char (+ % 97))
+                  #(str "arg" (inc %))))
+        (range n)))
+
+(defn- arity-args [n {:keys [arglists variadic?]}]
+  (cond
+    (next arglists) [(make-args n) (when variadic? "more")]
+    variadic?       (let [args (first arglists)]
+                      [(butlast args) (last args)])
+    :else           [(first arglists) nil]))
+
+(defn- emit-arity [coll indent n arity-data ns-data]
+  (let [{:keys [expr]}  arity-data
+        [args rest-arg] (arity-args n arity-data)
+        arglist         (cond-> args rest-arg (concat (list "&" rest-arg)))]
     (-> coll
-        (conj "^js [" (str/join " " args) "]\n" indent)
-        (emit-expr expr ns-data))))
+        ;; TODO: Use type name as hint?
+        ;; TODO: Only hint for object types?
+        (conj "^js [" (str/join " " arglist) "]\n" indent)
+        (emit-expr expr args rest-arg ns-data))))
 
-#_(defn- emit-arglists [coll arities]
-    (let [arglists (->> arities
-                        (mapcat val)
-                        (map :args)
-                        distinct
-                        sort)]
-      (-> coll
-          (conj "\n  {:arglists '(")
-          (into (mapcat #(list "[" (str/join " " %) "] ")) arglists)
-          (conj ")}"))))
+(defn- has-ambiguous-args? [arities]
+  (some next (map :arglists (vals arities))))
 
-;; TODO: Merge ranges of aritites (w/ arglists)?
-;; TODO: Alias global functions instead of wrapping them?
+(defn- compare-vectors [x y]
+  (let [nx (count x)
+        ny (count y)
+        dn (compare nx ny)]
+    (if (zero? dn)
+      (compare x y)
+      (let [d (if (neg? dn)
+                (compare x (subvec y 0 nx))
+                (compare (subvec x 0 ny) y))]
+        (if (zero? d)
+          dn
+          d)))))
+
+(defn- emit-arglists-meta [coll arities]
+  (let [arglists (->> (vals arities)
+                      (mapcat :arglists)
+                      (sort compare-vectors)
+                      (map #(str "[" (str/join " " %) "]")))]
+    (conj coll
+          "  {:arglists '("
+          (str/join "\n               " arglists)
+          ")}\n")))
+
 (defn- emit-defn-arities
   [coll arities ns-data]
-  (if (= 1 (count arities))
-    (let [[_ exprs] (first arities)]
-      (-> coll
-          (conj "  ")
-          (emit-arity-expr "  " exprs ns-data)))
-    (-> coll
-        ;(emit-arglists arities)
-        (into (comp (map (fn [[_ exprs]]
-                           (-> ["  ("]
-                               (emit-arity-expr "   " exprs ns-data)
-                               (conj ")"))))
-                    (interpose (list "\n"))
-                    cat)
-              (sort-by key arities)))))
+  (let [coll (cond-> coll
+               (has-ambiguous-args? arities) (emit-arglists-meta arities))]
+    (if (= 1 (count arities))
+      (let [[n arity-data] (first arities)]
+        (-> coll
+            (conj "  ")
+            (emit-arity "  " n arity-data ns-data)))
+      (into coll
+            (comp (map (fn [[n arity-data]]
+                         (-> ["  ("]
+                             (emit-arity "   " n arity-data ns-data)
+                             (conj ")"))))
+                  (interpose (list "\n"))
+                  cat)
+            (sort-by key arities)))))
 
 (defn- emit-defn
   [coll {:keys [var-name doc arities]} ns-data]
@@ -207,7 +237,7 @@
       (conj ")\n")))
 
 (defn- emit-def
-  [coll {:keys [var-name doc init]} ns-data]
+  [coll {:keys [var-name doc init-expr]} ns-data]
   (-> coll
       (conj "(")
       (emit-core-symbol "def" ns-data)
@@ -218,13 +248,13 @@
                     (emit-doc-string doc)
                     (conj "\n  "))
                 (conj % " ")))
-      (emit-expr init ns-data)
+      (emit-expr init-expr nil nil ns-data)
       (conj ")\n")))
 
 (defn- emit-var
   [coll var-data ns-data]
   (let [coll (conj coll "\n")]
-    (if (:init var-data)
+    (if (:init-expr var-data)
       (emit-def coll var-data ns-data)
       (emit-defn coll var-data ns-data))))
 
@@ -254,10 +284,12 @@
         filename (str (last segments) ".cljs")]
     (path/join (apply path/join out-dir dirs) filename)))
 
+(defn- var-exprs [{:keys [init-expr arities]}]
+  (cons init-expr (map (comp :expr val) arities)))
+
 (defn- collect-requires [ns-data]
   (let [module-names (into #{} (comp (map val)
-                                     (mapcat (fn [{:keys [init arities]}]
-                                               (cons init (mapcat val arities))))
+                                     (mapcat var-exprs)
                                      (keep :module-name))
                            (:vars ns-data))]
     (cond-> ns-data
