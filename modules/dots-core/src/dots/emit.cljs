@@ -51,23 +51,51 @@
     (-> coll (conj " ") (into (interpose " " args)))
     coll))
 
-(defn- emit-call [coll path args]
+(defn- emit-call* [coll path emit-args]
   (case (count path)
     1 (-> coll
           (conj "(" (first path))
-          (emit-args args)
+          (emit-args)
           (conj ")"))
     2 (-> coll
           (conj "(." (second path) " " (first path))
-          (emit-args args)
+          (emit-args)
           (conj ")"))
     (-> coll
         (conj "(.. " (first path))
         (into (mapcat #(list " -" %)) (butlast (next path)))
         (conj " (" (last path))
-        (emit-args args)
+        (emit-args)
         (conj "))"))))
 
+(defn- emit-call [coll path args]
+  (emit-call* coll path #(emit-args % args)))
+
+(defn- emit-apply-args [coll path args rest-arg]
+  (-> coll
+      (conj " ")
+      (as-> % (let [this-path (butlast path)]
+                (if (seq this-path)
+                  (emit-get % this-path)
+                  (conj % "nil"))))
+      (conj " (to-array ")
+      (as-> % (if (seq args)
+                (-> %
+                    (conj "(" (if (next args) "list*" "cons"))
+                    (emit-args args)
+                    (conj " " rest-arg ")"))
+                (conj % rest-arg)))
+      (conj ")")))
+
+(defn- emit-apply [coll path args rest-arg]
+  (emit-call* coll (concat path (list "apply")) #(emit-apply-args % path args rest-arg)))
+
+(defn- emit-call-or-apply [coll path args rest-arg]
+  (if rest-arg
+    (emit-apply coll path args rest-arg)
+    (emit-call coll path args)))
+
+;; TODO: Support var-args variant, maybe using (.construct js/Reflect ctor args)
 (defn- emit-construct [coll path args]
   (-> coll
       (conj "(new ")
@@ -78,50 +106,50 @@
 (defn- module-path [{:keys [module-name path]} ns-data]
   (if-let [alias (get-in ns-data [:requires module-name])]
     (cons (str alias "/" (first path)) (next path))
-    (throw (ex-info (str "Missing require for module" module-name)
+    (throw (ex-info (str "Missing require for module: " module-name)
                     {:type ::missing-require
                      :module-name module-name
                      :ns-data ns-data}))))
 
 (defmulti ^:private emit-expr
-  {:arglists '([coll expr args ns-data])}
-  (fn [_ expr _ _]
+  {:arglists '([coll expr ns-data])}
+  (fn [_ expr _]
     (:op expr)))
 
 (defmethod emit-expr :global-get
-  [coll expr _ ns-data]
+  [coll expr ns-data]
   (emit-get coll (module-path expr ns-data)))
 
 (defmethod emit-expr :global-set
-  [coll expr args ns-data]
+  [coll {:keys [args] :as expr} ns-data]
   (emit-set coll (module-path expr ns-data) (first args)))
 
 (defmethod emit-expr :global-call
-  [coll expr args ns-data]
-  (emit-call coll (module-path expr ns-data) args))
+  [coll {:keys [args rest-arg] :as expr} ns-data]
+  (emit-call-or-apply coll (module-path expr ns-data) args rest-arg))
 
 (defmethod emit-expr :global-construct
-  [coll expr args ns-data]
+  [coll {:keys [args] :as expr} ns-data]
   (emit-construct coll (module-path expr ns-data) args))
 
 (defmethod emit-expr :arg-get
-  [coll {:keys [path]} args _]
+  [coll {:keys [path args]} _]
   (emit-get coll (cons (first args) path)))
 
 (defmethod emit-expr :arg-set
-  [coll {:keys [path]} args _]
+  [coll {:keys [path args]} _]
   (emit-set coll (cons (first args) path) (second args)))
 
 (defmethod emit-expr :arg-call
-  [coll {:keys [path]} args _]
-  (emit-call coll (cons (first args) path) (next args)))
+  [coll {:keys [path args rest-arg]} _]
+  (emit-call-or-apply coll (cons (first args) path) (next args) rest-arg))
 
-;; TODO: Support variadic (neg? arity)
-(defn- emit-arity-expr [coll indent _arity exprs ns-data]
-  (let [{:keys [args] :as expr} (first exprs)]
+(defn- emit-arity-expr [coll indent exprs ns-data]
+  (let [{:keys [args rest-arg] :as expr} (first exprs)
+        args (cond-> args rest-arg (concat (list "&" rest-arg)))]
     (-> coll
         (conj "[" (str/join " " args) "]\n" indent)
-        (emit-expr expr args ns-data))))
+        (emit-expr expr ns-data))))
 
 #_(defn- emit-arglists [coll arities]
     (let [arglists (->> arities
@@ -139,15 +167,15 @@
 (defn- emit-defn-arities
   [coll arities ns-data]
   (if (= 1 (count arities))
-    (let [[arity exprs] (first arities)]
+    (let [[_ exprs] (first arities)]
       (-> coll
           (conj "  ")
-          (emit-arity-expr "  " arity exprs ns-data)))
+          (emit-arity-expr "  " exprs ns-data)))
     (-> coll
         ;(emit-arglists arities)
-        (into (comp (map (fn [[arity exprs]]
+        (into (comp (map (fn [[_ exprs]]
                            (-> ["  ("]
-                               (emit-arity-expr "   " arity exprs ns-data)
+                               (emit-arity-expr "   " exprs ns-data)
                                (conj ")"))))
                     (interpose (list "\n"))
                     cat)
@@ -181,7 +209,7 @@
                     (emit-doc-string doc)
                     (conj "\n  "))
                 (conj % " ")))
-      (emit-expr init nil ns-data)
+      (emit-expr init ns-data)
       (conj ")\n")))
 
 (defn- emit-var

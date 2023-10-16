@@ -36,7 +36,6 @@
     (apply update-in ctx [:namespaces k] f args)
     (do
       (println "Warning: Attempting to add to var outside of namespace")
-      ;; TODO: Not in a namespace yet -- is this for the default import?
       ctx)))
 
 (defn- assoc-ns-path [ctx]
@@ -44,7 +43,7 @@
 
 (defn- enter-namespace [ctx symbol-name ns-data]
   (-> ctx
-      ;; TODO We might want to separate "symbol path" and "namespace path"?
+      ;; ? We might want to separate "symbol path" and "namespace path"?
       ;; E.g. if we don't want to mirror the hierarchy?
       (update :symbol-path conj symbol-name)
       (update-ns-path #(conj % (names/cljs-name symbol-name)))
@@ -54,7 +53,7 @@
 (defn- leave-namespace [ctx]
   (-> ctx
       (update :symbol-path pop)
-      ;; TODO: Keep a separate stack of mapped ns-paths,
+      ;; ? Keep a separate stack of mapped ns-paths,
       ;; so that users can map symbol-paths arbitarily
       (update-ns-path pop)))
 
@@ -97,12 +96,7 @@
     {:type ::init-arity-conflict
      :message "Var :init and :arities are mutually exclusive"}
     (when-let [existing (first (get-in var-data [:arities arity]))]
-      (if (and (neg? arity)
-               (not= (count (:args existing))
-                     (count (:args expr))))
-        {:type ::variadic-conflict
-         :message "Different number of required arguments in variadic arity"}
-        (expr-conflict existing expr)))))
+      (expr-conflict existing expr))))
 
 (defn- expr-exception [ctx var-name expr conflict]
   (ex-info (:message conflict)
@@ -125,29 +119,53 @@
                  (throw (expr-exception ctx var-name expr conflict))
                  (update-in var-data [:arities arity] (fnil conj []) expr)))))
 
-(defn- signature-arglists [{:keys [params]}]
-  (let [[req opt] (split-with (complement :optional?) params)
-        args (into [] (map (comp names/cljs-name :name)) req)]
-    ;; TODO: Variadic if the last required parameter is a :rest? parameter.
-    #_(when (-> req last :rest?))
-    (loop [arglists [args]
-           args args
-           opt opt]
-      (if-let [arg (first opt)]
-        (let [args (conj args (names/cljs-name (:name arg)))]
-          (recur (conj arglists args) args (next opt)))
-        arglists))))
+(defn- adapt-signature [{:keys [params]}]
+  (let [params        (mapv (fn [param]
+                              ;; TODO: Keep some type information for hints, doc-string
+                              (-> (select-keys param [:name :doc :optional? :rest?])
+                                  (update :name names/cljs-name)))
+                            params)
+        params-map    (into {} (map (juxt :name identity)) params)
+        [params rest] (if (:rest? (peek params))
+                        [(pop params) (peek params)]
+                        [params nil])
+        [req opt]     (split-with (complement :optional?) params)
+        req-args      (mapv :name req)
+        req-arity     {:args req-args}
+        arities       (if (seq opt)
+                        (loop [arities [req-arity]
+                               args    req-args
+                               opt     opt]
+                          (if-let [param (first opt)]
+                            (let [args (conj args (:name param))]
+                              (recur (conj arities {:args args}) args (next opt)))
+                            (if rest
+                              (conj (pop arities) (assoc (peek arities) :rest-arg (:name rest)))
+                              arities)))
+                        [(cond-> req-arity rest (assoc :rest-arg (:name rest)))])]
+    ;; TODO: Add return type information for doc-string
+    (cond-> {:params  params-map
+             :arities arities}
+      rest (assoc :variadic rest))))
+
+;; !!! Typescript supports multiple variadic signatures, e.g.:
+;; showWarningMessage(message, options?, ...items)
+;; ClojureScript does not.  We can, however, omit longer signatures, and add arglists instead
+(defn- add-signature [ctx var-name signature expr-fn]
+  (let [{:keys [_params arities]} (adapt-signature signature)]
+    ;; TODO: Store info from params and return type in var-map
+    ;; Also need to take "this" arg into account, when added by expr-fn
+    ;; Probably need a second pass to construct a doc-string?
+    (reduce (fn [ctx {:keys [args rest-arg]}]
+              (let [{:keys [args] :as expr} (expr-fn args rest-arg)
+                    expr (cond-> expr rest-arg (assoc :rest-arg rest-arg))]
+                (add-arity ctx var-name (count args) expr)))
+            ctx
+            arities)))
 
 (defn- add-signatures [ctx var-name signatures expr-fn]
   (reduce (fn [ctx signature]
-            ;; TODO: Check for variadic params
-            ;; TODO: Consider param types and docstrings
-            ;; TODO: Consider return value?
-            (reduce (fn [ctx args]
-                      (let [{:keys [args] :as expr} (expr-fn args)]
-                        (add-arity ctx var-name (count args) expr)))
-                    ctx
-                    (signature-arglists signature)))
+            (add-signature ctx var-name signature expr-fn))
           ctx
           signatures))
 
