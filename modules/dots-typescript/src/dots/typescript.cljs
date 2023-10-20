@@ -32,7 +32,7 @@
   ([root-names ^CompilerOptions options ^CompilerHost host ^Program old-program ^"Diagnostic[]" config-file-parsing-diagnostics]
    (ts/createProgram root-names options host old-program config-file-parsing-diagnostics)))
 
-(defn get-combined-modifier-flags [^Declaration node]
+(defn combined-modifier-flags [^Declaration node]
   (ts/getCombinedModifierFlags node))
 
 (defn display-parts-to-string

@@ -5,6 +5,7 @@
             [dots.typescript :as ts]
             [dots.typescript.import-clause :as import-clause]
             [dots.typescript.import-declaration :as import-declaration]
+            [dots.typescript.modifier-flags :as modifier-flags]
             [dots.typescript.namespace-import :as namespace-import]
             [dots.typescript.object-flags :as object-flags]
             [dots.typescript.program :as program]
@@ -211,6 +212,9 @@
     (when (seq parts)
       (ts/display-parts-to-string parts))))
 
+(defn- modifier-flags [sym]
+  (ts/combined-modifier-flags (symbol/value-declaration sym)))
+
 (declare extract-symbol)
 
 (defn- add-members [data k env syms]
@@ -268,14 +272,18 @@
   (-> data
       (update :traits conj :property)
       (assoc :type (extract-symbol-type env sym))
-      (cond-> (has? (symbol/flags sym) symbol-flags/optional)
-        (assoc :optional? true))))
+      (cond->
+       (has? (symbol/flags sym) symbol-flags/optional)     (assoc :optional? true)
+       (has? (modifier-flags sym) modifier-flags/readonly) (assoc :const? true))))
 
 (defn- extract-method [data env sym]
   (let [checker (:type-checker env)
         type    (type-checker/type-of-symbol checker sym)]
     (-> data
-        (update :traits conj :method)
+        (update :traits conj (if (has? (modifier-flags sym) modifier-flags/static)
+                               ;; Treat static class members as module functions
+                               :function
+                               :method))
         (add-call-signatures env type))))
 
 (defn- extract-get-accessor [data _env _sym]
@@ -307,11 +315,16 @@
 
 (defn- extract-class [data env sym]
   (let [checker (:type-checker env)
-        type    (type-checker/type-of-symbol checker sym)]
+        type    (type-checker/type-of-symbol checker sym)
+        statics (->> (type-checker/properties-of-type checker type)
+                     ;; Every class has a prototype property.
+                     (remove #(has? (symbol/flags %) symbol-flags/prototype)))]
     (-> (extract-class-or-interface :class data env sym)
         (add-construct-signatures env type)
-        ;; Static members
-        (add-members :exports env (es6-iterator-seq (.values (symbol/exports sym)))))))
+        (cond-> (seq statics)
+          ;; Treat statics as module
+          (-> (update :traits conj :module)
+              (add-members :exports env statics))))))
 
 (defn- extract-interface [data env sym]
   (extract-class-or-interface :interface data env sym))
