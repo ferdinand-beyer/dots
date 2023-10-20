@@ -277,14 +277,19 @@
        (has? (modifier-flags sym) modifier-flags/readonly) (assoc :const? true))))
 
 (defn- extract-method [data env sym]
+  (extract-property data env sym)
   (let [checker (:type-checker env)
-        type    (type-checker/type-of-symbol checker sym)]
+        type    (->> (type-checker/type-of-symbol checker sym)
+                     ;; Methods can be optional, too
+                     (type-checker/non-nullable-type checker))]
     (-> data
         (update :traits conj (if (has? (modifier-flags sym) modifier-flags/static)
                                ;; Treat static class members as module functions
                                :function
                                :method))
-        (add-call-signatures env type))))
+        (add-call-signatures env type)
+        (cond->
+         (has? (symbol/flags sym) symbol-flags/optional) (assoc :optional? true)))))
 
 (defn- extract-get-accessor [data _env _sym]
   (update data :traits conj :get-accessor))

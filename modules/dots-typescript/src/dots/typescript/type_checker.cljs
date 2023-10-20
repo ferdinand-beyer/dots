@@ -174,6 +174,14 @@
 (defn base-types ^"BaseType[]" [^TypeChecker type-checker ^InterfaceType type]
   (.getBaseTypes type-checker type))
 
+(defn nullable-type
+  ^Type [^TypeChecker type-checker ^Type type ^TypeFlags flags]
+  (.getNullableType type-checker type flags))
+
+(defn non-nullable-type
+  ^Type [^TypeChecker type-checker ^Type type]
+  (.getNonNullableType type-checker type))
+
 (defn return-type-of-signature
   ^Type [^TypeChecker type-checker ^Signature signature]
   (.getReturnTypeOfSignature type-checker signature))

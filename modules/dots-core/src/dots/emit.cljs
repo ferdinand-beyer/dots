@@ -227,6 +227,7 @@
 
 (defn- emit-defn
   [coll {:keys [var-name doc arities]} ns-data]
+  {:pre [(seq arities)]}
   (-> coll
       (conj "(")
       (emit-core-symbol "defn" ns-data)

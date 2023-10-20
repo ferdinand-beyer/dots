@@ -352,6 +352,7 @@
                                           (assoc get-expr :op (if bind-expr :global-call :arg-call)))
          set-expr (add-setter-var node set-expr)))))
 
+;; TODO: Methods can be optional, should we add a null-check arity?
 (defmethod adapt-trait :method
   [ctx _ {:keys [name signatures] :as node}]
   (let [var-name (names/cljs-name name)
