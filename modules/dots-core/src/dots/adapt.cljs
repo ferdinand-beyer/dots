@@ -208,6 +208,7 @@
   (fn [_ctx trait _node]
     trait))
 
+;; TODO: Order traits, e.g. adapt module before class?
 (defn- adapt* [ctx node]
   (if (:internal? node)
     ctx
@@ -228,34 +229,47 @@
     (reduce adapt* % (table/tvals exports))
     (leave-namespace %)))
 
-(defn- adapt-variable-interface [ctx node expr interface-node]
-  (-> ctx
-      (enter-namespace (:name node) (select-keys node [:doc]))
-      (assoc :bind-expr expr)
-      (as-> % (reduce adapt* % (table/tvals (:members interface-node))))
-      (dissoc :bind-expr)
-      (leave-namespace)))
+(defn- adapt-variable-interface [ctx node var-name expr interface-node]
+  (let [signatures (:signatures interface-node)]
+    (-> ctx
+        ;; TODO: Handle arity clash: get property vs call with zero args
+        (cond-> (seq signatures) (add-signatures var-name signatures (assoc expr :op :global-call)))
+        (enter-namespace (:name node) (select-keys node [:doc]))
+        (assoc :bind-expr expr)
+        (as-> % (reduce adapt* % (table/tvals (:members interface-node))))
+        (dissoc :bind-expr)
+        (leave-namespace))))
+
+(defn- resolve-interface-type [ctx type]
+  (when (:object? type)
+    (if-let [fqn (:fqn type)]
+      (resolve-fqn ctx fqn)
+      (if-let [type-ref (:reference type)]
+        ;; Resolve type reference
+        (recur ctx type-ref)
+        (when-let [types (:union type)]
+          (when (and (:undefined? type)
+                     (= 2 (count types)))
+            ;; Type | undefined
+            (recur ctx (first (remove :undefined? types)))))))))
 
 (defmethod adapt-trait :variable
   [ctx _ {:keys [name type] :as node}]
-  (let [var-name       (names/cljs-name name)
-        expr           {:module-name (get-in ctx [:module :import-name])
-                        :path        (vec (next (:symbol-path ctx)))}
-        interface-node (when (:object? type)
-                         (some->> (:fqn type) (resolve-fqn ctx)))]
+  (let [var-name  (names/cljs-name name)
+        expr      {:module-name (get-in ctx [:module :import-name])
+                   :path        (vec (next (:symbol-path ctx)))}
+        interface (resolve-interface-type ctx type)]
     (if (:ns-key ctx)
       ;; Variable within a module
       (let [expr (update expr :path conj name)]
         (-> ctx
             (add-var var-name (select-keys node [:doc]))
-            ;; TODO: Add :init-expr for consts, e.g. generate a `def` instead of `defn`?
+            ;; ? :init-expr for consts, e.g. generate a `def` instead of `defn`?
             (add-arity var-name (assoc expr :op :global-get))
-            ;; TODO: If the type is callable, add arities to call?
-            (cond->
-             interface-node (adapt-variable-interface node expr interface-node))))
+            (cond-> interface (adapt-variable-interface node var-name expr interface))))
       ;; Exported module has variable trait.
       (cond-> ctx
-        interface-node (adapt-variable-interface node expr interface-node)))))
+        interface (adapt-variable-interface node var-name expr interface)))))
 
 (defmethod adapt-trait :function
   [ctx _ {:keys [name signatures] :as node}]
@@ -309,21 +323,34 @@
 
 (def ^:private setter-args ["value"])
 
+(defn- add-setter-var [ctx {:keys [name] :as node} expr]
+  (let [var-name (str "set-" (names/cljs-name name) "!")]
+    (-> ctx
+        (add-var var-name (select-keys node [:doc]))
+        (add-arity var-name expr setter-args))))
+
 (defmethod adapt-trait :property
-  [ctx _ {:keys [name const?] :as node}]
-  ;; TODO: If the type is callable, add arities (e.g. VS-Code events)
-  (let [var-name (names/cljs-name name)
-        ctx      (add-var ctx var-name (select-keys node [:doc]))]
-    (if-let [bind-expr (:bind-expr ctx)]
-      (let [expr (update bind-expr :path conj name)]
-        (cond-> (add-arity ctx var-name (assoc expr :op :global-get))
-          (not const?) (add-arity var-name (assoc expr :op :global-set) setter-args)))
-      (cond-> (add-arity ctx var-name {:op   :arg-get
-                                       :path [name]})
-        (not const?) (add-arity var-name
-                                {:op   :arg-set
-                                 :path [name]}
-                                setter-args)))))
+  [ctx _ {:keys [name const? type] :as node}]
+  (let [var-name   (names/cljs-name name)
+        bind-expr  (:bind-expr ctx)
+        get-expr   (if bind-expr
+                     (-> bind-expr
+                         (assoc :op :global-get)
+                         (update :path conj name))
+                     {:op   :arg-get
+                      :path [name]})
+        set-expr   (when-not const?
+                     (assoc get-expr :op (if bind-expr :global-set :arg-set)))
+        signatures (some-> (resolve-interface-type ctx type) :signatures)]
+    (-> ctx
+        (add-var var-name (select-keys node [:doc]))
+        (add-arity var-name get-expr)
+        (cond->
+         ;; TODO: Handle arity clash: get property vs call with zero args
+         (seq signatures) (add-signatures var-name
+                                          signatures
+                                          (assoc get-expr :op (if bind-expr :global-call :arg-call)))
+         set-expr (add-setter-var node set-expr)))))
 
 (defmethod adapt-trait :method
   [ctx _ {:keys [name signatures] :as node}]
