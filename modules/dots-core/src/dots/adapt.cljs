@@ -138,7 +138,7 @@
   ([ctx var-name expr args rest-arg]
    {:pre [(vector? args)]}
    (let [args  (cond-> args
-                 (#{:arg-get :arg-call} (:op expr)) (add-this-arg ctx)
+                 (#{:arg-get :arg-set :arg-call} (:op expr)) (add-this-arg ctx)
                  rest-arg (conj rest-arg))
          arity (cond-> (count args) rest-arg dec)]
      (update-ns ctx update-in [:vars var-name]
@@ -275,13 +275,14 @@
 
 (defmethod adapt-trait :class
   [ctx _ node]
-  ;; TODO: Look for construct signatures?
-  ;; TODO: Adapt exports (static members)
+  ;; TODO: Adapt constructors (->name) from construct signatures
   (adapt-interface ctx node))
 
 (defmethod adapt-trait :interface
   [ctx _ node]
   ;; TODO: Add `invoke` var when the interface has call signatures?
+  ;; TODO: Create a "constructor" to create compatible objects?
+  ;; (defn ->interface [& members] #js {...members...})
   (adapt-interface ctx node))
 
 (defmethod adapt-trait :enum
@@ -306,18 +307,23 @@
 ;; TODO: Clojurify names, e.g. '?' suffix for booleans, remove `is-` and `get-` prefixes
 ;; But then: Handle collisions, e.g. "name" and "getName" (maybe use `-name` for property access?)
 
+(def ^:private setter-args ["value"])
+
 (defmethod adapt-trait :property
-  [ctx _ {:keys [name] :as node}]
+  [ctx _ {:keys [name const?] :as node}]
   ;; TODO: If the type is callable, add arities (e.g. VS-Code events)
   (let [var-name (names/cljs-name name)
         ctx      (add-var ctx var-name (select-keys node [:doc]))]
     (if-let [bind-expr (:bind-expr ctx)]
-      (let [expr (-> bind-expr
-                     (assoc :op :global-get)
-                     (update :path conj name))]
-        (add-arity ctx var-name expr))
-      (add-arity ctx var-name {:op   :arg-get
-                               :path [name]}))))
+      (let [expr (update bind-expr :path conj name)]
+        (cond-> (add-arity ctx var-name (assoc expr :op :global-get))
+          (not const?) (add-arity var-name (assoc expr :op :global-set) setter-args)))
+      (cond-> (add-arity ctx var-name {:op   :arg-get
+                                       :path [name]})
+        (not const?) (add-arity var-name
+                                {:op   :arg-set
+                                 :path [name]}
+                                setter-args)))))
 
 (defmethod adapt-trait :method
   [ctx _ {:keys [name signatures] :as node}]
