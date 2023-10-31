@@ -250,11 +250,13 @@
 
 (defn- extract-parameter [env sym]
   (let [checker (:type-checker env)
-        decl    (symbol/value-declaration sym)]
+        decl    (symbol/value-declaration sym)
+        type    (extract-symbol-type env sym)]
     (-> (extract-symbol env sym)
-        (assoc :type (extract-symbol-type env sym))
+        (assoc :type type)
         (cond->
-         (type-checker/optional-parameter? checker decl) (assoc :optional? true)
+         (or (:undefined? type)
+             (type-checker/optional-parameter? checker decl)) (assoc :optional? true)
          (ts/rest-parameter? decl) (assoc :rest? true)))))
 
 (defn- extract-signature [env sig]
@@ -336,17 +338,20 @@
         (add-call-signatures env type))))
 
 (defn- extract-class [data env sym]
-  (let [checker (:type-checker env)
-        type    (type-checker/type-of-symbol checker sym)
-        statics (->> (type-checker/properties-of-type checker type)
-                     ;; Every class has a prototype property.
-                     (remove #(has? (symbol/flags %) symbol-flags/prototype)))]
+  (let [checker     (:type-checker env)
+        type        (type-checker/type-of-symbol checker sym)
+        class-fqn   (fqn env sym)
+        static-syms (->> (type-checker/properties-of-type checker type)
+                         ;; Every class has a prototype property.
+                         (remove #(has? (symbol/flags %) symbol-flags/prototype))
+                         ;; No inherited exports.
+                         (filter #(= class-fqn (take (count class-fqn) (fqn env %)))))]
     (-> (extract-class-or-interface :class data env sym)
         (add-construct-signatures env type)
-        (cond-> (seq statics)
+        (cond-> (seq static-syms)
           ;; Treat statics as module
           (-> (update :traits conj :module)
-              (add-members :exports env statics))))))
+              (add-members :exports env static-syms))))))
 
 (defn- extract-interface [data env sym]
   (extract-class-or-interface :interface data env sym))
@@ -406,25 +411,33 @@
       (has? flags symbol-flags/get-accessor) (extract-get-accessor env sym)
       (has? flags symbol-flags/set-accessor) (extract-set-accessor env sym))))
 
-(defn- extract-symbol [env sym]
+(defn- extract-symbol* [env sym]
   (-> (symbol-common env sym)
       (amend-symbol env sym)))
+
+(defn- extract-symbol [env sym]
+  (let [cache (:symbols* env)]
+    (if-let [data (get @cache sym)]
+      (if (keyword-identical? ::pending data)
+        (let [fqn (fqn env sym)]
+          (println "Warning: Circular symbol dependency" fqn)
+          {:fqn       fqn
+           :circular? true})
+        data)
+      (do
+        (swap! cache assoc sym ::pending)
+        (let [data (extract-symbol* env sym)]
+          (swap! cache assoc sym data)
+          data)))))
 
 (defn extract [module-name opts]
   (let [program (create-program module-name opts)
         symbol  (imported-module-symbol program)
         env     {:type-checker (program/get-type-checker program)
+                 :symbols*     (atom {})
                  :types*       (atom {})}]
     ;; TODO: The imported symbol is a variable => extract its type
     ;; For example, the "path" module exports the `PlatformPath`
     ;; interface
     (-> (extract-symbol env symbol)
-        (assoc :import-name module-name))
-    #_(let [module (-> (extract-symbol env symbol)
-                       (assoc :import-name module-name))]
-        (tap> (->> (vals @(:types* env))
-                   (remove :object?)
-                   (remove :literal)
-                   (map (juxt :str identity))
-                   (into {})))
-        module)))
+        (assoc :import-name module-name))))
