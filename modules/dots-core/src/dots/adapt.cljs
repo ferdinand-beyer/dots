@@ -41,14 +41,14 @@
 (defn- assoc-ns-path [ctx]
   (update-ns ctx assoc :ns-path (:ns-path ctx)))
 
-(defn- enter-namespace [ctx symbol-name ns-data]
+(defn- enter-namespace [ctx symbol-name doc-string]
   (-> ctx
       ;; ? We might want to separate "symbol path" and "namespace path"?
       ;; E.g. if we don't want to mirror the hierarchy?
       (update :symbol-path conj symbol-name)
       (update-ns-path #(conj % (names/cljs-name symbol-name)))
       (assoc-ns-path)
-      (update-ns merge ns-data)))
+      (cond-> doc-string (update-ns assoc :doc doc-string))))
 
 (defn- leave-namespace [ctx]
   (-> ctx
@@ -57,13 +57,18 @@
       ;; so that users can map symbol-paths arbitarily
       (update-ns-path pop)))
 
-(defn- add-var [ctx var-name data]
-  ;; TODO: Handle name conflicts (rename?)
-  ;; TODO: Rename reserved names such as `nil` (are there others?)
-  (update-ns ctx
-             update :vars
-             table/tupdate var-name
-             merge data {:var-name var-name}))
+(defn- add-var
+  ([ctx var-name doc-string]
+   (add-var ctx var-name doc-string nil))
+  ([ctx var-name doc-string preferred-name]
+   (let [var-name (names/munge-name var-name)]
+     (update-ns ctx
+                update :vars
+                table/tupdate var-name
+                (fn [var-data]
+                  (cond-> (assoc var-data :var-name var-name)
+                    doc-string (assoc :doc doc-string)
+                    preferred-name (assoc :preferred-name preferred-name)))))))
 
 (defn- expr-conflict [x y]
   (cond
@@ -225,7 +230,7 @@
 (defmethod adapt-trait :module
   [ctx _ {:keys [name exports] :as node}]
   (as-> ctx %
-    (enter-namespace % name (select-keys node [:doc]))
+    (enter-namespace % name (:doc node))
     (reduce adapt* % (table/tvals exports))
     (leave-namespace %)))
 
@@ -234,7 +239,7 @@
     (-> ctx
         ;; TODO: Handle arity clash: get property vs call with zero args
         (cond-> (seq signatures) (add-signatures var-name signatures (assoc expr :op :global-call)))
-        (enter-namespace (:name node) (select-keys node [:doc]))
+        (enter-namespace (:name node) (:doc node))
         (assoc :bind-expr expr)
         (as-> % (reduce adapt* % (table/tvals (:members interface-node))))
         (dissoc :bind-expr)
@@ -263,7 +268,7 @@
       ;; Variable within a module
       (let [expr (update expr :path conj name)]
         (-> ctx
-            (add-var var-name (select-keys node [:doc]))
+            (add-var var-name (:doc node))
             ;; ? :init-expr for consts, e.g. generate a `def` instead of `defn`?
             (add-arity var-name (assoc expr :op :global-get))
             (cond-> interface (adapt-variable-interface node var-name expr interface))))
@@ -276,14 +281,14 @@
   (let [var-name (names/cljs-name name)
         [_module & path] (:symbol-path ctx)
         path     (conj (vec path) name)
-        ctx      (add-var ctx var-name (select-keys node [:doc]))]
+        ctx      (add-var ctx var-name (:doc node))]
     (add-signatures ctx var-name signatures {:op          :global-call
                                              :module-name (get-in ctx [:module :import-name])
                                              :path        path})))
 
 (defn- adapt-interface [ctx {:keys [name members] :as node}]
   (-> ctx
-      (enter-namespace name (select-keys node [:doc]))
+      (enter-namespace name (:doc node))
       (as-> % (reduce adapt* % (table/tvals members)))
       (leave-namespace)))
 
@@ -302,7 +307,7 @@
 (defmethod adapt-trait :enum
   [ctx _ {:keys [name members] :as node}]
   (as-> ctx %
-    (enter-namespace % name (select-keys node [:doc]))
+    (enter-namespace % name (:doc node))
     (reduce adapt* % (table/tvals members))
     (leave-namespace %)))
 
@@ -311,7 +316,7 @@
   (let [var-name        (names/cljs-name name)
         [_module & path] (:symbol-path ctx)]
     (-> ctx
-        (add-var var-name (select-keys node [:doc]))
+        (add-var var-name (:doc node))
         (add-init var-name {:op          :global-get
                             :module-name (get-in ctx [:module :import-name])
                             :path        (conj (vec path) name)}))))
@@ -326,7 +331,7 @@
 (defn- add-setter-var [ctx {:keys [name] :as node} expr]
   (let [var-name (str "set-" (names/cljs-name name) "!")]
     (-> ctx
-        (add-var var-name (select-keys node [:doc]))
+        (add-var var-name (:doc node))
         (add-arity var-name expr setter-args))))
 
 (defmethod adapt-trait :property
@@ -343,7 +348,7 @@
                      (assoc get-expr :op (if bind-expr :global-set :arg-set)))
         signatures (some-> (resolve-interface-type ctx type) :signatures)]
     (-> ctx
-        (add-var var-name (select-keys node [:doc]))
+        (add-var var-name (:doc node))
         (add-arity var-name get-expr)
         (cond->
          ;; TODO: Handle arity clash: get property vs call with zero args
@@ -363,7 +368,7 @@
                    {:op   :arg-call
                     :path [name]})]
     (-> ctx
-        (add-var var-name (select-keys node [:doc]))
+        (add-var var-name (:doc node))
         (add-signatures var-name signatures expr))))
 
 (defn- unify-variadic-arities

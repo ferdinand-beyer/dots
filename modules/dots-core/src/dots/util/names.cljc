@@ -30,3 +30,10 @@
 
 (defn split-fqn [fqn]
   (vec (re-seq #"\"[^\"]+\"|\w+" fqn)))
+
+(def reserved-names #{"nil"})
+
+(defn munge-name [n]
+  (if (reserved-names n)
+    (str (n "*"))
+    n))
