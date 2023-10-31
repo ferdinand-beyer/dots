@@ -37,3 +37,8 @@
   (if (reserved-names n)
     (str (n "*"))
     n))
+
+(defn strip-getter-prefix [n]
+  (if-let [[_ n*] (re-matches #"(?:get|is)-(.+)" n)]
+    n*
+    n))

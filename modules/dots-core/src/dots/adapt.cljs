@@ -57,18 +57,24 @@
       ;; so that users can map symbol-paths arbitarily
       (update-ns-path pop)))
 
+(defn- preferred-name [n type]
+  (-> n
+      names/strip-getter-prefix
+      (cond-> (:boolean? type) (str "?"))))
+
 (defn- add-var
   ([ctx var-name doc-string]
    (add-var ctx var-name doc-string nil))
-  ([ctx var-name doc-string preferred-name]
-   (let [var-name (names/munge-name var-name)]
+  ([ctx var-name doc-string type]
+   (let [var-name (names/munge-name var-name)
+         preferred-name (preferred-name var-name type)]
      (update-ns ctx
                 update :vars
                 table/tupdate var-name
                 (fn [var-data]
                   (cond-> (assoc var-data :var-name var-name)
                     doc-string (assoc :doc doc-string)
-                    preferred-name (assoc :preferred-name preferred-name)))))))
+                    (not= var-name preferred-name) (assoc :preferred-name preferred-name)))))))
 
 (defn- expr-conflict [x y]
   (cond
@@ -164,13 +170,32 @@
             (assoc to merged)
             (dissoc from))))))
 
+(defn- prepare-params [params]
+  (->> params
+       (map-indexed (fn [i {:keys [name type]
+                            :as   param}]
+                      (let [name           (-> name names/cljs-name names/munge-name)
+                            preferred-name (preferred-name name type)]
+                        (-> (select-keys param [:doc :type :optional? :rest?])
+                            (assoc :index i, :name name)
+                            (cond-> (not= name preferred-name) (assoc :preferred-name preferred-name))))))
+       (into {} (map (juxt :name identity)))))
+
+(defn- rename-params [params-map]
+  (reduce (fn [m {:keys [preferred-name]
+                  :as   param}]
+            (let [param (-> param
+                            (dissoc :preferred-name)
+                            (cond-> (and preferred-name
+                                         (not (contains? params-map preferred-name)))
+                              (assoc :name preferred-name)))]
+              (assoc m (:name param) param)))
+          {}
+          (vals params-map)))
+
 (defn- adapt-signature [{:keys [params]}]
-  (let [params        (mapv (fn [param]
-                              ;; TODO: Keep some type information for hints, doc-string
-                              (-> (select-keys param [:name :doc :optional? :rest?])
-                                  (update :name names/cljs-name)))
-                            params)
-        params-map    (into {} (map (juxt :name identity)) params)
+  (let [params-map    (-> params prepare-params rename-params)
+        params        (vec (sort-by :index (vals params-map)))
         [params rest] (if (:rest? (peek params))
                         [(pop params) (peek params)]
                         [params nil])
@@ -268,7 +293,7 @@
       ;; Variable within a module
       (let [expr (update expr :path conj name)]
         (-> ctx
-            (add-var var-name (:doc node))
+            (add-var var-name (:doc node) type)
             ;; ? :init-expr for consts, e.g. generate a `def` instead of `defn`?
             (add-arity var-name (assoc expr :op :global-get))
             (cond-> interface (adapt-variable-interface node var-name expr interface))))
@@ -276,12 +301,15 @@
       (cond-> ctx
         interface (adapt-variable-interface node var-name expr interface)))))
 
+(defn- signatures-return-type [signatures]
+  (apply merge (map :return-type signatures)))
+
 (defmethod adapt-trait :function
   [ctx _ {:keys [name signatures] :as node}]
   (let [var-name (names/cljs-name name)
         [_module & path] (:symbol-path ctx)
         path     (conj (vec path) name)
-        ctx      (add-var ctx var-name (:doc node))]
+        ctx      (add-var ctx var-name (:doc node) (signatures-return-type signatures))]
     (add-signatures ctx var-name signatures {:op          :global-call
                                              :module-name (get-in ctx [:module :import-name])
                                              :path        path})))
@@ -348,7 +376,7 @@
                      (assoc get-expr :op (if bind-expr :global-set :arg-set)))
         signatures (some-> (resolve-interface-type ctx type) :signatures)]
     (-> ctx
-        (add-var var-name (:doc node))
+        (add-var var-name (:doc node) type)
         (add-arity var-name get-expr)
         (cond->
          ;; TODO: Handle arity clash: get property vs call with zero args
@@ -368,8 +396,19 @@
                    {:op   :arg-call
                     :path [name]})]
     (-> ctx
-        (add-var var-name (:doc node))
+        (add-var var-name (:doc node) (signatures-return-type signatures))
         (add-signatures var-name signatures expr))))
+
+(defn- rename-vars
+  "Assigns vars their preferred name if that is possible without collision."
+  [vars]
+  (reduce (fn [new-vars {:keys [var-name preferred-name] :as var-data}]
+            (let [var-data (dissoc var-data :preferred-name)]
+              (if (and preferred-name (not (contains? vars preferred-name)))
+                (assoc new-vars preferred-name (assoc var-data :var-name preferred-name))
+                (assoc new-vars var-name var-data))))
+          {}
+          (table/tvals vars)))
 
 (defn- unify-variadic-arities
   "Merges variadic arities of all vars.
@@ -393,6 +432,13 @@
                  (assoc-in ctx [:namespaces ns-key :vars var-name :arities] arities))
                ctx)))
 
+(defn- post-process-namespace [ns-data]
+  (-> ns-data
+      (update :vars rename-vars)))
+
+(defn- post-process-namespaces [ctx]
+  (update-vals (:namespaces ctx) post-process-namespace))
+
 (defn- default-root-ns-path [import-name]
   (->> (str/split import-name "/")
        (map names/cljs-name)
@@ -408,4 +454,4 @@
                                (default-root-ns-path import-name)))
         (adapt* module)
         unify-variadic-arities
-        :namespaces)))
+        post-process-namespaces)))

@@ -148,11 +148,20 @@
 (defn- merge-union-type [props types]
   (apply merge props (map #(select-keys % type-flag-keys) types)))
 
+(defn- maybe-boolean-union [props component-types]
+  ;; `boolean | undefined` is (sometimes?) reported as `undefined | true | false`
+  (let [literals (into #{} (keep :literal) component-types)]
+    (cond-> props
+      (and (contains? literals true)
+           (contains? literals false))
+      (assoc :boolean? true))))
+
 (defn- extract-union-or-intersection-type [props env type]
   (let [component-types (mapv #(extract-type env %) (type/types type))]
     (if (type/union? type)
       (-> props
           (merge-union-type component-types)
+          (maybe-boolean-union component-types)
           (assoc :union component-types))
       (assoc props :intersection component-types))))
 
@@ -162,6 +171,12 @@
     ;; A enum type gets `enum-literal` + `union` flags...
     (cond-> (assoc props :enum? true)
       sym (assoc :fqn (fqn env sym)))))
+
+(defn- literal-value [type flags]
+  (let [value (type/value type)]
+    (if (has? flags type-flags/boolean-literal)
+      (parse-boolean value)
+      value)))
 
 (defn- extract-type* [env type]
   (let [checker (:type-checker env)
@@ -174,6 +189,8 @@
       (has? flags type-flags/string) (assoc :primitive :string, :string? true)
       (has? flags type-flags/number) (assoc :primitive :number, :number? true)
       (has? flags type-flags/boolean) (assoc :primitive :boolean, :boolean? true)
+      ;; TODO: BooleanLiteral is not considered type/literal?
+      (has? flags type-flags/boolean-literal) (as-> % (assoc % :literal (parse-boolean (:str %))))
       (has? flags type-flags/enum-like) (extract-enum-type env type)
       (has? flags type-flags/void) (assoc :primitive :void, :void? true)
       (has? flags type-flags/undefined) (assoc :primitive :undefined, :undefined? true)
@@ -181,7 +198,7 @@
       (has? flags type-flags/never) (assoc :never? true)
       (has? flags type-flags/type-parameter) (assoc :param? true)
       (has? flags type-flags/object) (extract-object-type env type)
-      (type/literal? type) (assoc :literal (type/value type))
+      (type/literal? type) (assoc :literal (literal-value type flags))
       (type/union-or-intersection? type) (extract-union-or-intersection-type env type)
       *debug?* (assoc :debug/type-flags flags))))
 
