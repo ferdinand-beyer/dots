@@ -197,9 +197,17 @@
           dn
           d)))))
 
+(defn- insert-ampersand [arglist]
+  (-> (into [] (butlast arglist))
+      (conj "&" (last arglist))))
+
+(defn- arity-arglists [arity]
+  (cond->> (:arglists arity)
+    (:variadic? arity) (map insert-ampersand)))
+
 (defn- emit-arglists-meta [coll arities]
   (let [arglists (->> (vals arities)
-                      (mapcat :arglists)
+                      (mapcat arity-arglists)
                       (sort compare-vectors)
                       (map #(str "[" (str/join " " %) "]")))]
     (conj coll
