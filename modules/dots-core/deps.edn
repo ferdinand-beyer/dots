@@ -1,6 +1,5 @@
 {:paths ["src"]
- :deps {applied-science/js-interop {:mvn/version "0.3.3"}
-        camel-snake-kebab/camel-snake-kebab {:mvn/version "0.4.3"}
-        dots/node {:local/root "../dots-node"}
-        dots/typescript {:local/root "../dots-typescript"}
-        org.clojure/tools.cli {:mvn/version "1.0.219"}}}
+ :deps {camel-snake-kebab/camel-snake-kebab {:mvn/version "0.4.3"}
+        io.github.dots-cljs/dots-node       {:git/sha "e2c65d2d50e0472f9f818b67c898432c7b6264c1"}
+        io.github.dots-cljs/dots-typescript {:git/sha "7ff40ab358563232b9ead2e20e4be93d8f6c991c"}
+        org.clojure/tools.cli               {:mvn/version "1.0.219"}}}

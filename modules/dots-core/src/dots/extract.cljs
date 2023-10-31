@@ -16,8 +16,12 @@
             [dots.typescript.symbol :as symbol]
             [dots.typescript.symbol-flags :as symbol-flags]
             [dots.typescript.type :as type]
+            [dots.typescript.union-or-intersection-type :as union-or-intersection-type]
+            [dots.typescript.literal-type :as literal-type]
             [dots.typescript.type-checker :as type-checker]
             [dots.typescript.type-flags :as type-flags]
+            [dots.typescript.object-type :as object-type]
+            [dots.typescript.type-reference :as type-reference]
             [dots.util.names :as names]
             [dots.util.table :as table]))
 
@@ -88,7 +92,7 @@
 (defn- import-identifier
   "Returns the identifier node representing the module import."
   [program]
-  (let [source-file   (program/get-source-file program proxy-file-name)
+  (let [source-file   (program/source-file program proxy-file-name)
         import-clause (import-declaration/import-clause
                        (first (source-file/statements source-file)))]
     (or (import-clause/name import-clause)
@@ -96,7 +100,7 @@
          (import-clause/named-bindings import-clause)))))
 
 (defn- imported-module-symbol [program]
-  (let [checker (program/get-type-checker program)]
+  (let [checker (program/type-checker program)]
     (->> (import-identifier program)
          (type-checker/symbol-at-location checker)
          (type-checker/aliased-symbol checker))))
@@ -115,7 +119,7 @@
       (names/split-fqn)))
 
 (defn- extract-type-reference [props env type]
-  (let [target  (type/target type)]
+  (let [target  (type-reference/target type)]
     (if (identical? type target)
       props
       (let [checker (:type-checker env)
@@ -131,10 +135,10 @@
         (assoc (if (type/class? type) :class? :interface?) true)
         (cond->
          sym      (assoc :fqn (fqn env sym))
-         *debug?* (assoc :debug/object-flags (type/object-flags type))))))
+         *debug?* (assoc :debug/object-flags (object-type/object-flags type))))))
 
 (defn- extract-object-type [props env type]
-  (let [flags (type/object-flags type)]
+  (let [flags (object-type/object-flags type)]
     (-> props
         (assoc :object? true)
         (cond->
@@ -157,7 +161,7 @@
       (assoc :boolean? true))))
 
 (defn- extract-union-or-intersection-type [props env type]
-  (let [component-types (mapv #(extract-type env %) (type/types type))]
+  (let [component-types (mapv #(extract-type env %) (union-or-intersection-type/types type))]
     (if (type/union? type)
       (-> props
           (merge-union-type component-types)
@@ -173,7 +177,7 @@
       sym (assoc :fqn (fqn env sym)))))
 
 (defn- literal-value [type flags]
-  (let [value (type/value type)]
+  (let [value (literal-type/value type)]
     (if (has? flags type-flags/boolean-literal)
       (parse-boolean value)
       value)))
@@ -433,7 +437,7 @@
 (defn extract [module-name opts]
   (let [program (create-program module-name opts)
         symbol  (imported-module-symbol program)
-        env     {:type-checker (program/get-type-checker program)
+        env     {:type-checker (program/type-checker program)
                  :symbols*     (atom {})
                  :types*       (atom {})}]
     ;; TODO: The imported symbol is a variable => extract its type
