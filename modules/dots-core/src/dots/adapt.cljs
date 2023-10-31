@@ -400,7 +400,7 @@
         (add-signatures var-name signatures expr))))
 
 (defn- rename-vars
-  "Assigns vars their preferred name if that is possible without collision."
+  "Renames vars to their preferred name if that is possible without collision."
   [vars]
   (reduce (fn [new-vars {:keys [var-name preferred-name] :as var-data}]
             (let [var-data (dissoc var-data :preferred-name)]
@@ -416,9 +416,8 @@
    While TypeScript supports multiple variadic signatures for one function,
    ClojureScript only supports one.  We therefore need to resolve this by
    reducing all variadic arities into the shortest one."
-  [ctx]
-  (->> (for [[ns-key   {:keys [vars]}] (:namespaces ctx)
-             [var-name {:keys [arities]}] vars
+  [vars]
+  (->> (for [[var-name {:keys [arities]}] vars
              :let [variadics (filter #(:variadic? (val %)) arities)]
              :when (next variadics)]
          (let [arity-keys (sort (keys variadics))
@@ -427,14 +426,13 @@
                                     (merge-arities arities shortest key))
                                   arities
                                   (next arity-keys))]
-           [ns-key var-name arities]))
-       (reduce (fn [ctx [ns-key var-name arities]]
-                 (assoc-in ctx [:namespaces ns-key :vars var-name :arities] arities))
-               ctx)))
+           [var-name arities]))
+       (reduce (fn [vars [var-name arities]]
+                 (assoc-in vars [var-name :arities] arities))
+               vars)))
 
 (defn- post-process-namespace [ns-data]
-  (-> ns-data
-      (update :vars rename-vars)))
+  (update ns-data :vars (comp rename-vars unify-variadic-arities)))
 
 (defn- post-process-namespaces [ctx]
   (update-vals (:namespaces ctx) post-process-namespace))
@@ -453,5 +451,4 @@
                                (str/split namespace #"\.")
                                (default-root-ns-path import-name)))
         (adapt* module)
-        unify-variadic-arities
         post-process-namespaces)))
